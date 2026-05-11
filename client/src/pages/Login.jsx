@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Eye, EyeOff, LogIn } from 'lucide-react';
+import { Eye, EyeOff, LogIn, ShieldCheck, Mail, Lock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const Login = () => {
@@ -25,7 +25,6 @@ const Login = () => {
       [name]: value,
     }));
 
-    // Clear error when user starts typing
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }));
     }
@@ -33,15 +32,13 @@ const Login = () => {
 
   const validateForm = () => {
     const newErrors = {};
-
     if (!formData.email) {
-      newErrors.email = 'Email is required';
+      newErrors.email = 'Email address is required';
     } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Email is invalid';
+      newErrors.email = 'Please enter a valid email';
     }
-
     if (!formData.password) {
-      newErrors.password = 'Password is required';
+      newErrors.password = 'Security password is required';
     }
 
     setErrors(newErrors);
@@ -50,7 +47,6 @@ const Login = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     if (!validateForm()) return;
 
     setIsLoading(true);
@@ -66,102 +62,113 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-secondary-400 to-secondary-600 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div className="text-center">
-          <h2 className="text-3xl font-bold text-white">Welcome Back</h2>
-          <p className="mt-2 text-secondary-100">Sign in to your JAMII LOAN account</p>
+    <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] py-12 px-4">
+      <div className="max-w-md w-full">
+        {/* Branding Section */}
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-2xl shadow-xl shadow-blue-100 mb-6 rotate-3">
+            <span className="text-white text-3xl font-black italic">Z</span>
+          </div>
+          <h2 className="text-3xl font-black text-slate-900 tracking-tight">Welcome Back</h2>
+          <p className="mt-2 text-slate-500 font-medium italic">Secure access to Zambia Z Portal</p>
         </div>
 
-        <div className="bg-white rounded-lg shadow-xl p-8">
+        <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200 border border-slate-100 p-10">
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Email */}
+            {/* Email Field */}
             <div>
-              <label htmlFor="email" className="form-label">
-                Email Address
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 ml-1">
+                Authorized Email
               </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                required
-                className="form-input"
-                placeholder="Enter your email"
-                value={formData.email}
-                onChange={handleChange}
-              />
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <Mail className={`h-5 w-5 transition-colors ${errors.email ? 'text-rose-400' : 'text-slate-300 group-focus-within:text-blue-500'}`} />
+                </div>
+                <input
+                  name="email"
+                  type="email"
+                  className={`w-full pl-12 pr-4 py-4 bg-slate-50 border-2 rounded-2xl outline-none transition-all font-bold text-slate-900 placeholder:text-slate-300 ${errors.email ? 'border-rose-100 focus:border-rose-500' : 'border-transparent focus:border-blue-500 focus:bg-white'}`}
+                  placeholder="name@example.com"
+                  value={formData.email}
+                  onChange={handleChange}
+                />
+              </div>
               {errors.email && (
-                <p className="mt-1 text-sm text-danger-600">{errors.email}</p>
+                <p className="mt-2 text-[11px] font-bold text-rose-500 ml-1">{errors.email}</p>
               )}
             </div>
 
-            {/* Password */}
+            {/* Password Field */}
             <div>
-              <label htmlFor="password" className="form-label">
-                Password
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 ml-1">
+                Secure Password
               </label>
-              <div className="relative">
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <Lock className={`h-5 w-5 transition-colors ${errors.password ? 'text-rose-400' : 'text-slate-300 group-focus-within:text-blue-500'}`} />
+                </div>
                 <input
-                  id="password"
                   name="password"
                   type={showPassword ? 'text' : 'password'}
-                  required
-                  className="form-input pr-10"
-                  placeholder="Enter your password"
+                  className={`w-full pl-12 pr-12 py-4 bg-slate-50 border-2 rounded-2xl outline-none transition-all font-bold text-slate-900 placeholder:text-slate-300 ${errors.password ? 'border-rose-100 focus:border-rose-500' : 'border-transparent focus:border-blue-500 focus:bg-white'}`}
+                  placeholder="••••••••"
                   value={formData.password}
                   onChange={handleChange}
                 />
                 <button
                   type="button"
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                  className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-300 hover:text-blue-500 transition-colors"
                   onClick={() => setShowPassword(!showPassword)}
                 >
-                  {showPassword ? (
-                    <EyeOff className="h-5 w-5 text-gray-400" />
-                  ) : (
-                    <Eye className="h-5 w-5 text-gray-400" />
-                  )}
+                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
               </div>
               {errors.password && (
-                <p className="mt-1 text-sm text-danger-600">{errors.password}</p>
+                <p className="mt-2 text-[11px] font-bold text-rose-500 ml-1">{errors.password}</p>
               )}
             </div>
 
-            {/* General Error */}
+            {/* General Error Notification */}
             {errors.general && (
-              <div className="bg-danger-50 border border-danger-200 rounded-md p-4">
-                <p className="text-sm text-danger-600">{errors.general}</p>
+              <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 flex items-center gap-3 animate-in fade-in zoom-in duration-300">
+                <AlertTriangle className="h-5 w-5 text-rose-500 shrink-0" />
+                <p className="text-[11px] font-bold text-rose-600 leading-tight uppercase tracking-tight">{errors.general}</p>
               </div>
             )}
 
-            {/* Submit Button */}
+            {/* Submit Action */}
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full btn-secondary flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-slate-900 hover:bg-blue-600 text-white py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl shadow-slate-200 transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3"
             >
               {isLoading ? (
-                <div className="spinner mr-2"></div>
+                <RefreshCw className="h-5 w-5 animate-spin" />
               ) : (
-                <LogIn className="h-5 w-5 mr-2" />
+                <LogIn className="h-5 w-5" />
               )}
-              {isLoading ? 'Signing In...' : 'Sign In'}
+              {isLoading ? 'Verifying...' : 'Authenticate'}
             </button>
           </form>
 
-
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
-              Don't have an account?{' '}
+          {/* Footer Navigation */}
+          <div className="mt-10 pt-8 border-t border-slate-50 text-center">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+              New to Zambia Z?{' '}
               <Link
                 to="/register"
-                className="font-medium text-secondary-600 hover:text-secondary-500"
+                className="text-blue-600 hover:text-slate-900 transition-colors ml-1"
               >
-                Sign up here
+                Create Account
               </Link>
             </p>
           </div>
+        </div>
+
+        {/* Bottom Security Badge */}
+        <div className="mt-8 flex items-center justify-center gap-2 text-slate-400">
+          <ShieldCheck className="h-4 w-4" />
+          <span className="text-[10px] font-black uppercase tracking-widest">256-bit Encrypted Session</span>
         </div>
       </div>
     </div>
