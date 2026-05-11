@@ -1,49 +1,40 @@
 const prisma = require('../config/prisma');
 
-// @desc    Create notification
-// @route   POST /api/notifications
-// @access  Private (Admin)
+/**
+ * ZAMBIA Z - NOTIFICATION SYSTEM
+ * Strategy: Strict ownership verification and efficient batching.
+ */
+
+// @desc    Create notification (Internal/Admin)
 const createNotification = async (req, res, next) => {
   try {
     const { userId, loanId, title, message } = req.body;
 
     const notification = await prisma.notification.create({
-      data: {
-        userId,
-        loanId,
-        title,
-        message,
-      },
+      data: { userId, loanId, title, message },
       include: {
-        user: {
-          select: { fullName: true, email: true },
-        },
-        loan: {
-          select: { amount: true, status: true },
-        },
+        user: { select: { fullName: true, email: true } },
+        loan: { select: { amount: true, status: true } },
       },
     });
 
-    res.status(201).json({
-      success: true,
-      data: notification,
-    });
+    res.status(201).json({ success: true, data: notification });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get all notifications (Admin)
-// @route   GET /api/notifications
-// @access  Private (Admin)
+// @desc    Get user's notifications (Self) or All (Admin)
 const getAllNotifications = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, userId, isRead } = req.query;
-    const skip = (page - 1) * limit;
+    const { page = 1, limit = 10, isRead } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const userId = req.user.role === 'ADMIN' && req.query.userId ? req.query.userId : req.user.uid;
 
-    const where = {};
-    if (userId) where.userId = userId;
-    if (isRead !== undefined) where.isRead = isRead === 'true';
+    const where = {
+      userId,
+      ...(isRead !== undefined && { isRead: isRead === 'true' }),
+    };
 
     const [notifications, total] = await Promise.all([
       prisma.notification.findMany({
@@ -52,12 +43,7 @@ const getAllNotifications = async (req, res, next) => {
         take: parseInt(limit),
         orderBy: { createdAt: 'desc' },
         include: {
-          user: {
-            select: { fullName: true, email: true },
-          },
-          loan: {
-            select: { amount: true, status: true },
-          },
+          loan: { select: { amount: true, status: true } },
         },
       }),
       prisma.notification.count({ where }),
@@ -78,104 +64,57 @@ const getAllNotifications = async (req, res, next) => {
   }
 };
 
-// @desc    Get notification by ID
-// @route   GET /api/notifications/:id
-// @access  Private
-const getNotificationById = async (req, res, next) => {
-  try {
-    const notification = await prisma.notification.findUnique({
-      where: { id: req.params.id },
-      include: {
-        user: {
-          select: { fullName: true, email: true },
-        },
-        loan: {
-          select: { amount: true, status: true },
-        },
-      },
-    });
-
-    if (!notification) {
-      return res.status(404).json({
-        success: false,
-        message: 'Notification not found',
-      });
-    }
-
-    res.json({
-      success: true,
-      data: notification,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Update notification
-// @route   PUT /api/notifications/:id
-// @access  Private
-const updateNotification = async (req, res, next) => {
-  try {
-    const { title, message, isRead } = req.body;
-
-    const notification = await prisma.notification.update({
-      where: { id: req.params.id },
-      data: {
-        ...(title && { title }),
-        ...(message && { message }),
-        ...(isRead !== undefined && { isRead }),
-      },
-      include: {
-        user: {
-          select: { fullName: true, email: true },
-        },
-        loan: {
-          select: { amount: true, status: true },
-        },
-      },
-    });
-
-    res.json({
-      success: true,
-      data: notification,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Mark notification as read
-// @route   PUT /api/notifications/:id/read
-// @access  Private
+// @desc    Mark specific notification as read (with ownership check)
 const markAsRead = async (req, res, next) => {
   try {
-    const notification = await prisma.notification.update({
-      where: { id: req.params.id },
+    const { id } = req.params;
+    const userId = req.user.uid;
+
+    // Use updateMany to safely enforce ownership without a separate query
+    const updateResult = await prisma.notification.updateMany({
+      where: { id, userId },
       data: { isRead: true },
     });
 
-    res.json({
-      success: true,
-      data: notification,
-    });
+    if (updateResult.count === 0) {
+      return res.status(404).json({ success: false, message: 'Notification not found or unauthorized' });
+    }
+
+    res.json({ success: true, message: 'Marked as read' });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Delete notification
-// @route   DELETE /api/notifications/:id
-// @access  Private
-const deleteNotification = async (req, res, next) => {
+// @desc    Mark ALL notifications as read for current user
+const markAllAsRead = async (req, res, next) => {
   try {
-    await prisma.notification.delete({
-      where: { id: req.params.id },
+    await prisma.notification.updateMany({
+      where: { userId: req.user.uid, isRead: false },
+      data: { isRead: true },
     });
 
-    res.json({
-      success: true,
-      message: 'Notification deleted successfully',
+    res.json({ success: true, message: 'All notifications cleared' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete notification (with ownership check)
+const deleteNotification = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.uid;
+
+    const deleteResult = await prisma.notification.deleteMany({
+      where: { id, userId },
     });
+
+    if (deleteResult.count === 0) {
+      return res.status(404).json({ success: false, message: 'Notification not found or unauthorized' });
+    }
+
+    res.json({ success: true, message: 'Deleted successfully' });
   } catch (error) {
     next(error);
   }
@@ -184,9 +123,7 @@ const deleteNotification = async (req, res, next) => {
 module.exports = {
   createNotification,
   getAllNotifications,
-  getNotificationById,
-  updateNotification,
   markAsRead,
+  markAllAsRead,
   deleteNotification,
 };
-
