@@ -1,77 +1,105 @@
-const { validateKenyanID } = require('../utils/idValidator');
+const Joi = require('joi');
 
-const validateRegister = (req, res, next) => {
-  const { fullName, email, nationalId, password, isCitizen } = req.body;
+/**
+ * ZAMBIA Z - SCHEMA DEFINITIONS
+ * Strategy: Centralized, strict, and reusable validation rules.
+ */
 
-  const errors = [];
+const schemas = {
+  // Registration Schema
+  register: Joi.object({
+    fullName: Joi.string()
+      .trim()
+      .min(3)
+      .max(50)
+      .required()
+      .messages({
+        'string.min': 'Full name must be at least 3 characters.',
+        'any.required': 'Full name is a mandatory field.'
+      }),
 
-  // Validate fullName
-  if (!fullName || typeof fullName !== 'string' || fullName.trim().length < 2) {
-    errors.push('Full name must be at least 2 characters long');
-  }
+    email: Joi.string()
+      .email({ tlds: { allow: false } })
+      .lowercase()
+      .required()
+      .messages({ 'string.email': 'Please provide a valid corporate or personal email.' }),
 
-  // Validate email
-  const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
-  if (!email || !emailRegex.test(email)) {
-    errors.push('Please provide a valid email address');
-  }
+    nationalId: Joi.string()
+      .regex(/^\d{7,8}$/) // Kenyan IDs are usually 7 or 8 digits
+      .required()
+      .messages({ 'string.pattern.base': 'National ID must be a valid 7 or 8-digit number.' }),
 
-  // Validate nationalId
-  if (!nationalId || !validateKenyanID(nationalId)) {
-    errors.push('Please provide a valid Kenyan National ID (9 digits with valid checksum)');
-  }
+    password: Joi.string()
+      .min(8)
+      .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+      .required()
+      .messages({
+        'string.min': 'Password must be at least 8 characters.',
+        'string.pattern.base': 'Password must contain an uppercase letter, a lowercase letter, and a number.'
+      }),
 
-  // Validate password
-  if (!password || password.length < 6) {
-    errors.push('Password must be at least 6 characters long');
-  }
+    isCitizen: Joi.boolean().required(),
+    
+    // Optional: Device Info for fraud tracking
+    deviceId: Joi.string().optional()
+  }),
 
-  // Validate isCitizen
-  if (typeof isCitizen !== 'boolean') {
-    errors.push('Citizenship status must be specified');
-  }
+  // Loan Application Schema
+  loanApplication: Joi.object({
+    amount: Joi.number()
+      .integer()
+      .min(500)
+      .max(100000)
+      .required()
+      .messages({
+        'number.min': 'Minimum loan amount is KSh 500.',
+        'number.max': 'Maximum loan amount allowed is KSh 100,000.'
+      }),
 
-  if (errors.length > 0) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors,
-    });
-  }
+    phoneNumber: Joi.string()
+      .regex(/^(?:254|\+254|0)?(7|1)\d{8}$/) // Matches 254, +254, or 07.../01...
+      .required()
+      .messages({ 'string.pattern.base': 'Invalid M-PESA phone number format.' }),
 
-  next();
+    description: Joi.string()
+      .max(255)
+      .allow('', null)
+      .optional()
+  })
 };
 
-const validateLoanApplication = (req, res, next) => {
-  const { amount, phoneNumber, description } = req.body;
+/**
+ * VALIDATION EXECUTION ENGINE
+ * Higher-order function to validate any schema
+ */
+const validate = (schemaName) => {
+  return (req, res, next) => {
+    const schema = schemas[schemaName];
+    if (!schema) {
+      return next(new Error(`Schema "${schemaName}" not found.`));
+    }
 
-  const errors = [];
-
-  // Validate amount
-  if (!amount || typeof amount !== 'number' || amount < 1000 || amount > 500000) {
-    errors.push('Loan amount must be between 1000 and 500000');
-  }
-
-  // Validate phone number (Kenyan format: 254xxxxxxxxx)
-  const phoneRegex = /^254\d{9}$/;
-  if (!phoneNumber || !phoneRegex.test(phoneNumber)) {
-    errors.push('Phone number must be in format 254xxxxxxxxx');
-  }
-
-  // Validate description (optional but if provided, not empty)
-  if (description && typeof description !== 'string') {
-    errors.push('Description must be a string');
-  }
-
-  if (errors.length > 0) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors,
+    const { error, value } = schema.validate(req.body, {
+      abortEarly: false, // Return all errors, not just the first one
+      stripUnknown: true, // Remove fields not defined in schema (Security!)
     });
-  }
 
-  next();
+    if (error) {
+      const errorMessages = error.details.map((detail) => detail.message.replace(/"/g, ''));
+      return res.status(400).json({
+        success: false,
+        message: 'Validation Error',
+        errors: errorMessages,
+      });
+    }
+
+    // Replace req.body with the sanitized/validated value
+    req.body = value;
+    next();
+  };
 };
 
-module.exports = { validateRegister, validateLoanApplication };
+module.exports = {
+  validateRegister: validate('register'),
+  validateLoanApplication: validate('loanApplication'),
+};
