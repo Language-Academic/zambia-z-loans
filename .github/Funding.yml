@@ -1,1 +1,6 @@
-github: mwakidenis
+# Zambia Z Loans - Official Funding Configuration
+# Professional Financial Services Support
+
+github: [Language-Academic] # Your GitHub username/org
+patreon: zambiaz_loans      # Professional brand name
+custom: ['https://zambiaz.vercel.app/invest'] # Link to your investment or support page
