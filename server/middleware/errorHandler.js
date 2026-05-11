@@ -1,65 +1,94 @@
+const { Prisma } = require('@prisma/client');
+
+/**
+ * ZAMBIA Z - GLOBAL ERROR INTERCEPTOR
+ * Strategy: Centralized Error Mapping & Environment-Aware Responses
+ */
+
 const errorHandler = (err, req, res, next) => {
-  let error = { ...err };
-  error.message = err.message;
+  let statusCode = err.statusCode || 500;
+  let message = err.message || 'Internal Server Error';
+  let details = null;
 
-  // Log error
-  console.error(err);
-
-  // Mongoose bad ObjectId
-  if (err.name === 'CastError') {
-    const message = 'Resource not found';
-    error = { message, statusCode: 404 };
+  // 1. Log errors for internal monitoring (Avoid console.log in pro apps, use a logger like Winston)
+  if (process.env.NODE_ENV === 'development') {
+    console.error('❌ [Error]:', err);
   }
 
-  // Mongoose duplicate key
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
-    const message = `${field.charAt(0).toUpperCase() + field.slice(1)} already exists`;
-    error = { message, statusCode: 400 };
+  // 2. Handle Prisma Specific Errors
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    switch (err.code) {
+      case 'P2002': // Unique constraint
+        statusCode = 400;
+        const target = err.meta?.target || 'Field';
+        message = `${target} is already taken. Please use a different value.`;
+        break;
+      case 'P2025': // Record not found
+        statusCode = 404;
+        message = 'The requested resource could not be found.';
+        break;
+      case 'P2003': // Foreign key failure
+        statusCode = 400;
+        message = 'Action failed: This resource is linked to other records.';
+        break;
+      case 'P2014': // Relation violation
+        statusCode = 400;
+        message = 'Invalid ID reference provided.';
+        break;
+      default:
+        message = 'A database error occurred while processing your request.';
+    }
   }
 
-  // Mongoose validation error
-  if (err.name === 'ValidationError') {
-    const message = Object.values(err.errors).map(val => val.message);
-    error = { message, statusCode: 400 };
+  // 3. Handle Prisma Validation Errors (e.g., wrong data types)
+  if (err instanceof Prisma.PrismaClientValidationError) {
+    statusCode = 400;
+    message = 'Invalid data provided. Please check your input fields.';
   }
 
-  // Prisma error handling
-  if (err.code === 'P2002') {
-    // Unique constraint violation
-    const field = err.meta?.target?.[0] || 'field';
-    const message = `${field.charAt(0).toUpperCase() + field.slice(1)} already exists`;
-    error = { message, statusCode: 400 };
-  }
-
-  if (err.code === 'P2025') {
-    // Record not found
-    const message = 'Resource not found';
-    error = { message, statusCode: 404 };
-  }
-
-  if (err.code === 'P2003') {
-    // Foreign key constraint violation
-    const message = 'Referenced resource does not exist';
-    error = { message, statusCode: 400 };
-  }
-
-  // JWT errors
+  // 4. Handle JWT / Auth Errors
   if (err.name === 'JsonWebTokenError') {
-    const message = 'Invalid token';
-    error = { message, statusCode: 401 };
+    statusCode = 401;
+    message = 'Invalid session token. Please log in again.';
   }
-
+  
   if (err.name === 'TokenExpiredError') {
-    const message = 'Token expired';
-    error = { message, statusCode: 401 };
+    statusCode = 401;
+    message = 'Session expired. Please refresh your login.';
   }
 
-  res.status(error.statusCode || 500).json({
+  // 5. Handle Custom Application Errors (e.g., insufficiency funds)
+  if (err.name === 'AppError') {
+    statusCode = err.statusCode;
+    message = err.message;
+  }
+
+  // 6. Final Response
+  const response = {
     success: false,
-    message: error.message || 'Server Error',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
-  });
+    message: message,
+    // Add extra info only in development mode
+    ...(process.env.NODE_ENV === 'development' && { 
+      stack: err.stack,
+      rawError: err
+    }),
+  };
+
+  res.status(statusCode).json(response);
 };
 
-module.exports = errorHandler;
+/**
+ * PRO-TIP: Custom Error Class
+ * Use this to throw errors in your controllers like:
+ * throw new AppError('Insufficient loan limit', 400);
+ */
+class AppError extends Error {
+  constructor(message, statusCode) {
+    super(message);
+    this.statusCode = statusCode;
+    this.name = 'AppError';
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+module.exports = { errorHandler, AppError };
