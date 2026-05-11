@@ -1,31 +1,38 @@
-
-
-
-
-name: python script
+name: Zambia Z System Sync
 
 on:
   schedule:
+    # Runs every 16 minutes to maintain system heartbeat
     - cron: "*/16 * * * *"
-  workflow_dispatch:
+  workflow_dispatch: # Allows you to run it manually for testing
 
 permissions:
   contents: write
 
 jobs:
-  update-timestamp:
+  system-heartbeat:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: refactor python
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Update System Logs
         run: |
-          TIMESTAMP_FILE="updates.txt"
-          echo "Last checked: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$TIMESTAMP_FILE"
-          git config user.name "mwakis bot"
-          git config user.email "mwakidenice@gmail.com"
-          git add "$TIMESTAMP_FILE"
+          # Use a more professional log file name
+          LOG_FILE="zambiaz-sync.log"
+          
+          echo "Zambia Z Heartbeat: $(date -u +"%Y-%m-%dT%H:%M:%SZ") | System Status: Active" > "$LOG_FILE"
+          
+          # Configure Git with your professional identity
+          git config user.name "Zambia Z System Bot"
+          git config user.email "admin@zambiaz.com"
+          
+          git add "$LOG_FILE"
+          
+          # Only commit if changes exist to avoid redundant logs
           if ! git diff --cached --quiet; then
-            git commit -m "Update timestamp: $(date -u)"
+            git commit -m "System: Zambia Z Heartbeat Sync [$(date -u +'%Y-%m-%d %H:%M')]"
           fi
-      - name: Push changes
+
+      - name: Push Synchronization
         run: git push origin HEAD
