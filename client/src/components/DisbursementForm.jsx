@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { DollarSign, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, CheckCircle, X, Banknote } from 'lucide-react';
 
 const DisbursementForm = ({ loan, onSubmit, onCancel, loading }) => {
   const [confirmAmount, setConfirmAmount] = useState('');
@@ -7,13 +7,13 @@ const DisbursementForm = ({ loan, onSubmit, onCancel, loading }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-
     const newErrors = {};
 
+    // Safety check: parse to float to ensure precision comparison
     if (!confirmAmount) {
-      newErrors.confirmAmount = 'Please confirm the disbursement amount';
-    } else if (parseFloat(confirmAmount) !== loan.amount) {
-      newErrors.confirmAmount = 'Amount does not match the loan amount';
+      newErrors.confirmAmount = 'Please enter the confirmation amount.';
+    } else if (parseFloat(confirmAmount) !== parseFloat(loan.amount)) {
+      newErrors.confirmAmount = `Security mismatch: Amount must be exactly KSh ${loan.amount.toLocaleString()}`;
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -25,85 +25,98 @@ const DisbursementForm = ({ loan, onSubmit, onCancel, loading }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-      <div className="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white">
-        <div className="mt-3">
-          <div className="flex items-center justify-center mb-4">
-            <div className="bg-blue-100 rounded-full p-3">
-              <DollarSign className="h-8 w-8 text-blue-600" />
+    <div className="fixed inset-0 bg-slate-900 bg-opacity-75 backdrop-blur-sm overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+      <div className="relative mx-auto w-full max-w-md shadow-2xl rounded-xl bg-white border border-slate-200 overflow-hidden">
+        
+        {/* Header Section */}
+        <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+          <div className="flex items-center space-x-2">
+            <ShieldCheck className="h-5 w-5 text-indigo-600" />
+            <h3 className="text-lg font-semibold text-slate-800">
+              Disbursement Security
+            </h3>
+          </div>
+          <button 
+            onClick={onCancel}
+            className="text-slate-400 hover:text-slate-600 transition-colors"
+          >
+            <X className="h-6 w-6" />
+          </button>
+        </div>
+
+        <div className="p-6">
+          <div className="flex items-center justify-center mb-6">
+            <div className="bg-indigo-50 rounded-full p-4">
+              <Banknote className="h-10 w-10 text-indigo-600" />
             </div>
           </div>
 
-          <h3 className="text-lg font-medium text-gray-900 text-center mb-4">
-            Confirm Loan Disbursement
-          </h3>
-
-          <div className="bg-gray-50 rounded-lg p-4 mb-4">
-            <div className="space-y-2">
+          {/* Borrower Summary */}
+          <div className="bg-slate-50 rounded-xl p-4 mb-6 border border-slate-100">
+            <div className="space-y-3">
               <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Borrower:</span>
-                <span className="text-sm font-medium text-gray-900">{loan.userId?.fullName}</span>
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Recipient:</span>
+                <span className="text-sm font-semibold text-slate-900">{loan.userId?.fullName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Loan Amount:</span>
-                <span className="text-sm font-medium text-gray-900">KSh {loan.amount.toLocaleString()}</span>
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Amount to Send:</span>
+                <span className="text-sm font-bold text-indigo-700">KSh {loan.amount.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">National ID:</span>
-                <span className="text-sm font-medium text-gray-900">{loan.userId?.nationalId}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Application Date:</span>
-                <span className="text-sm font-medium text-gray-900">
-                  {new Date(loan.createdAt).toLocaleDateString()}
-                </span>
+              <div className="flex justify-between border-t border-slate-200 pt-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">National ID:</span>
+                <span className="text-sm font-medium text-slate-700">{loan.userId?.nationalId}</span>
               </div>
             </div>
           </div>
 
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+          {/* Security Warning */}
+          <div className="bg-amber-50 border-l-4 border-amber-400 p-4 mb-6">
             <div className="flex items-start">
-              <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5 mr-3 flex-shrink-0" />
-              <div className="text-sm text-yellow-800">
-                <p className="font-medium mb-1">Important:</p>
+              <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5 mr-3 flex-shrink-0" />
+              <div className="text-xs text-amber-800 leading-relaxed">
+                <p className="font-bold mb-1">Authorization Notice:</p>
                 <ul className="list-disc list-inside space-y-1">
-                  <li>Funds will be sent directly to the borrower's M-PESA account</li>
-                  <li>This action cannot be undone</li>
-                  <li>Ensure all loan details are correct before proceeding</li>
+                  <li>Funds will be disbursed via <strong>Pesapal S3</strong>.</li>
+                  <li>This will hit the borrower's registered M-PESA or Bank account.</li>
+                  <li>This financial action is <strong>irreversible</strong>.</li>
                 </ul>
               </div>
             </div>
           </div>
 
-          <form onSubmit={handleSubmit}>
-            <div className="mb-4">
-              <label htmlFor="confirmAmount" className="block text-sm font-medium text-gray-700 mb-2">
-                Confirm Disbursement Amount (KSh)
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label htmlFor="confirmAmount" className="block text-sm font-semibold text-slate-700 mb-2">
+                Confirm Amount (To Verify)
               </label>
-              <input
-                type="number"
-                id="confirmAmount"
-                value={confirmAmount}
-                onChange={(e) => {
-                  setConfirmAmount(e.target.value);
-                  if (errors.confirmAmount) {
-                    setErrors({ ...errors, confirmAmount: '' });
-                  }
-                }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Enter the loan amount to confirm"
-                required
-              />
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <span className="text-slate-400 text-sm">KSh</span>
+                </div>
+                <input
+                  type="number"
+                  id="confirmAmount"
+                  value={confirmAmount}
+                  onChange={(e) => {
+                    setConfirmAmount(e.target.value);
+                    if (errors.confirmAmount) setErrors({ ...errors, confirmAmount: '' });
+                  }}
+                  className={`w-full pl-12 pr-4 py-3 bg-white border ${errors.confirmAmount ? 'border-red-500 ring-red-100' : 'border-slate-300 ring-indigo-100'} rounded-lg focus:outline-none focus:ring-4 transition-all`}
+                  placeholder="0.00"
+                  required
+                />
+              </div>
               {errors.confirmAmount && (
-                <p className="mt-1 text-sm text-red-600">{errors.confirmAmount}</p>
+                <p className="mt-2 text-xs font-medium text-red-600">{errors.confirmAmount}</p>
               )}
             </div>
 
-            <div className="flex space-x-3">
+            <div className="flex space-x-3 pt-2">
               <button
                 type="button"
                 onClick={onCancel}
-                className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors"
+                className="flex-1 bg-white border border-slate-300 text-slate-700 py-3 rounded-lg font-semibold hover:bg-slate-50 focus:ring-4 focus:ring-slate-100 transition-all"
                 disabled={loading}
               >
                 Cancel
@@ -111,14 +124,16 @@ const DisbursementForm = ({ loan, onSubmit, onCancel, loading }) => {
               <button
                 type="submit"
                 disabled={loading || !confirmAmount}
-                className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+                className="flex-1 bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center"
               >
                 {loading ? (
-                  <div className="spinner mr-2"></div>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                 ) : (
-                  <CheckCircle className="h-4 w-4 mr-2" />
+                  <>
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Approve & Send
+                  </>
                 )}
-                {loading ? 'Processing...' : 'Confirm Disbursement'}
               </button>
             </div>
           </form>
