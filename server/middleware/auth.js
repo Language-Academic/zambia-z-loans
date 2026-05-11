@@ -1,99 +1,100 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('../config/prisma');
 
-// Middleware to verify JWT token
+/**
+ * ZAMBIA Z - AUTHENTICATION MIDDLEWARE
+ * Strategy: Stateless verification with payload-first logic.
+ */
+
 const requireAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.startsWith('Bearer ')
-      ? authHeader.substring(7)
-      : null;
-
-    if (!token) {
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
-        message: 'Access token required'
+        message: 'Authentication required. Please provide a Bearer token.'
       });
     }
 
-    // Verify token
+    const token = authHeader.split(' ')[1];
+
+    // 1. Verify token integrity
     const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
 
-    // Check if user exists
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId }
-    });
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Attach user to request
+    /**
+     * PRO-TIP: We trust the JWT payload for performance.
+     * Only query the DB here if you need to check 'isActive' status 
+     * or 'lastPasswordChange' for high-security actions.
+     */
+    
+    // Attach user data to request (Mapped to 'uid' as used in controllers)
     req.user = {
-      userId: user.id,
-      role: user.role,
-      email: user.email
+      uid: decoded.uid || decoded.userId,
+      role: decoded.role || decoded.rol,
+      email: decoded.email
     };
 
     next();
   } catch (error) {
+    let message = 'Invalid or malformed session';
+    
     if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({
+      message = 'Session expired. Please refresh your token.';
+    } else if (error.name === 'JsonWebTokenError') {
+      message = 'Security violation: Invalid token signature.';
+    }
+
+    return res.status(401).json({ success: false, message });
+  }
+};
+
+/**
+ * Role-Based Access Control (RBAC) 
+ * Improved with an 'allowedRoles' array for cleaner extensibility.
+ */
+const authorize = (...allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Auth context missing' });
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({
         success: false,
-        message: 'Access token expired'
+        message: `Access denied. Requires one of: [${allowedRoles.join(', ')}]`
       });
     }
 
-    return res.status(401).json({
-      success: false,
-      message: 'Invalid access token'
-    });
-  }
+    next();
+  };
 };
 
-// Middleware to require admin role (ADMIN or SUPER_ADMIN)
-const requireAdmin = (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({
-      success: false,
-      message: 'Authentication required'
-    });
+// Standardized exports for cleaner route files
+const requireAdmin = authorize('ADMIN', 'SUPER_ADMIN');
+const requireSuperAdmin = authorize('SUPER_ADMIN');
+
+/**
+ * Account Integrity Check (Optional/High-Security)
+ * Use this ONLY for sensitive routes (like loan disbursement) 
+ * to ensure the user hasn't been banned mid-session.
+ */
+const verifyAccountStatus = async (req, res, next) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.uid },
+    select: { isActive: true }
+  });
+
+  if (!user || !user.isActive) {
+    return res.status(403).json({ success: false, message: 'Account disabled' });
   }
-
-  if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
-    return res.status(403).json({
-      success: false,
-      message: 'Admin access required'
-    });
-  }
-
-  next();
-};
-
-// Middleware to require super admin role
-const requireSuperAdmin = (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({
-      success: false,
-      message: 'Authentication required'
-    });
-  }
-
-  if (req.user.role !== 'SUPER_ADMIN') {
-    return res.status(403).json({
-      success: false,
-      message: 'Super admin access required'
-    });
-  }
-
   next();
 };
 
 module.exports = {
   requireAuth,
+  authorize,
   requireAdmin,
-  requireSuperAdmin
+  requireSuperAdmin,
+  verifyAccountStatus
 };
