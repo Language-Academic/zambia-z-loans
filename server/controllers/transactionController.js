@@ -1,11 +1,18 @@
 const prisma = require('../config/prisma');
 
-// @desc    Create transaction
-// @route   POST /api/transactions
-// @access  Private
+/**
+ * ZAMBIA Z - FINANCIAL TRANSACTION LEDGER
+ * Strategy: Immutable ledger principles and strict data isolation.
+ */
+
+// @desc    Create transaction (Internal/System Use)
+// Note: Usually called by payment callbacks or disbursement logic
 const createTransaction = async (req, res, next) => {
   try {
-    const { userId, loanId, amount, type, status, transactionId, mpesaReceiptNumber, phoneNumber, description } = req.body;
+    const { 
+      userId, loanId, amount, type, status, 
+      mpesaReceiptNumber, phoneNumber, description 
+    } = req.body;
 
     const transaction = await prisma.transaction.create({
       data: {
@@ -13,43 +20,41 @@ const createTransaction = async (req, res, next) => {
         loanId,
         amount,
         type,
-        status,
-        transactionId,
+        status: status || 'pending',
         mpesaReceiptNumber,
         phoneNumber,
         description,
       },
       include: {
-        user: {
-          select: { fullName: true, email: true },
-        },
-        loan: {
-          select: { amount: true, status: true },
-        },
+        user: { select: { fullName: true, email: true } },
+        loan: { select: { amount: true, status: true } },
       },
     });
 
-    res.status(201).json({
-      success: true,
-      data: transaction,
-    });
+    res.status(201).json({ success: true, data: transaction });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get all transactions (Admin)
-// @route   GET /api/transactions
-// @access  Private (Admin)
+// @desc    Get All Transactions (Admin Dashboard)
 const getAllTransactions = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, userId, type, status } = req.query;
-    const skip = (page - 1) * limit;
+    const { page = 1, limit = 10, userId, type, status, search } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const where = {};
-    if (userId) where.userId = userId;
-    if (type) where.type = type;
-    if (status) where.status = status;
+    const where = {
+      ...(userId && { userId }),
+      ...(type && { type }),
+      ...(status && { status }),
+      ...(search && {
+        OR: [
+          { mpesaReceiptNumber: { contains: search, mode: 'insensitive' } },
+          { phoneNumber: { contains: search } },
+          { user: { fullName: { contains: search, mode: 'insensitive' } } }
+        ]
+      })
+    };
 
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
@@ -58,12 +63,8 @@ const getAllTransactions = async (req, res, next) => {
         take: parseInt(limit),
         orderBy: { createdAt: 'desc' },
         include: {
-          user: {
-            select: { fullName: true, email: true },
-          },
-          loan: {
-            select: { amount: true, status: true },
-          },
+          user: { select: { fullName: true, phoneNumber: true } },
+          loan: { select: { amount: true } },
         },
       }),
       prisma.transaction.count({ where }),
@@ -74,7 +75,6 @@ const getAllTransactions = async (req, res, next) => {
       data: transactions,
       pagination: {
         page: parseInt(page),
-        limit: parseInt(limit),
         total,
         pages: Math.ceil(total / limit),
       },
@@ -84,47 +84,12 @@ const getAllTransactions = async (req, res, next) => {
   }
 };
 
-// @desc    Get transaction by ID
-// @route   GET /api/transactions/:id
-// @access  Private
-const getTransactionById = async (req, res, next) => {
-  try {
-    const transaction = await prisma.transaction.findUnique({
-      where: { id: req.params.id },
-      include: {
-        user: {
-          select: { fullName: true, email: true },
-        },
-        loan: {
-          select: { amount: true, status: true },
-        },
-      },
-    });
-
-    if (!transaction) {
-      return res.status(404).json({
-        success: false,
-        message: 'Transaction not found',
-      });
-    }
-
-    res.json({
-      success: true,
-      data: transaction,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Get user transactions
-// @route   GET /api/transactions/user/:userId
-// @access  Private
+// @desc    Get My Transactions (Self Only)
 const getUserTransactions = async (req, res, next) => {
   try {
-    const { userId } = req.params;
+    const userId = req.user.uid;
     const { page = 1, limit = 10 } = req.query;
-    const skip = (page - 1) * limit;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [transactions, total] = await Promise.all([
       prisma.transaction.findMany({
@@ -133,9 +98,7 @@ const getUserTransactions = async (req, res, next) => {
         take: parseInt(limit),
         orderBy: { createdAt: 'desc' },
         include: {
-          loan: {
-            select: { amount: true, status: true },
-          },
+          loan: { select: { amount: true, status: true } },
         },
       }),
       prisma.transaction.count({ where: { userId } }),
@@ -146,7 +109,6 @@ const getUserTransactions = async (req, res, next) => {
       data: transactions,
       pagination: {
         page: parseInt(page),
-        limit: parseInt(limit),
         total,
         pages: Math.ceil(total / limit),
       },
@@ -156,98 +118,64 @@ const getUserTransactions = async (req, res, next) => {
   }
 };
 
-// @desc    Update transaction
-// @route   PUT /api/transactions/:id
-// @access  Private
-const updateTransaction = async (req, res, next) => {
+// @desc    Get Single Transaction (With Ownership Check)
+const getTransactionById = async (req, res, next) => {
   try {
-    const { status, mpesaReceiptNumber, transactionId } = req.body;
-
-    const transaction = await prisma.transaction.update({
-      where: { id: req.params.id },
-      data: {
-        ...(status && { status }),
-        ...(mpesaReceiptNumber && { mpesaReceiptNumber }),
-        ...(transactionId && { transactionId }),
-      },
+    const { id } = req.params;
+    
+    const transaction = await prisma.transaction.findUnique({
+      where: { id },
       include: {
-        user: {
-          select: { fullName: true, email: true },
-        },
-        loan: {
-          select: { amount: true, status: true },
-        },
+        user: { select: { fullName: true, email: true } },
+        loan: { select: { amount: true, status: true } },
       },
     });
 
-    res.json({
-      success: true,
-      data: transaction,
-    });
+    if (!transaction) return res.status(404).json({ success: false, message: 'Not found' });
+
+    // SECURITY: Prevent users from viewing other people's money records
+    if (req.user.role !== 'ADMIN' && transaction.userId !== req.user.uid) {
+      return res.status(403).json({ success: false, message: 'Unauthorized' });
+    }
+
+    res.json({ success: true, data: transaction });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Delete transaction
-// @route   DELETE /api/transactions/:id
-// @access  Private (Admin)
-const deleteTransaction = async (req, res, next) => {
-  try {
-    await prisma.transaction.delete({
-      where: { id: req.params.id },
-    });
-
-    res.json({
-      success: true,
-      message: 'Transaction deleted successfully',
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Get transaction statistics (Admin)
-// @route   GET /api/transactions/stats
-// @access  Private (Admin)
+// @desc    Transaction Statistics for Admin Dashboard
 const getTransactionStats = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
+    const dateFilter = {};
+    if (startDate) dateFilter.gte = new Date(startDate);
+    if (endDate) dateFilter.lte = new Date(endDate);
 
-    const where = {};
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
-    }
+    const where = { ...(Object.keys(dateFilter).length && { createdAt: dateFilter }) };
 
-    const [totalTransactions, totalAmount, byType, byStatus] = await Promise.all([
-      prisma.transaction.count({ where }),
-      prisma.transaction.aggregate({
-        where,
-        _sum: { amount: true },
-      }),
-      prisma.transaction.groupBy({
-        by: ['type'],
-        where,
-        _sum: { amount: true },
-        _count: true,
-      }),
-      prisma.transaction.groupBy({
-        by: ['status'],
-        where,
-        _sum: { amount: true },
-        _count: true,
-      }),
-    ]);
+    // Advanced aggregation for financial reporting
+    const stats = await prisma.transaction.aggregate({
+      where: { ...where, status: 'completed' },
+      _sum: { amount: true },
+      _count: { id: true },
+      _avg: { amount: true }
+    });
+
+    const byType = await prisma.transaction.groupBy({
+      by: ['type'],
+      where,
+      _sum: { amount: true },
+      _count: true,
+    });
 
     res.json({
       success: true,
       data: {
-        totalTransactions,
-        totalAmount: totalAmount._sum.amount || 0,
-        byType,
-        byStatus,
+        totalVolume: stats._sum.amount || 0,
+        transactionCount: stats._count.id,
+        averageValue: stats._avg.amount || 0,
+        breakdown: byType,
       },
     });
   } catch (error) {
@@ -260,8 +188,6 @@ module.exports = {
   getAllTransactions,
   getTransactionById,
   getUserTransactions,
-  updateTransaction,
-  deleteTransaction,
   getTransactionStats,
+  // Note: update and delete are removed as financial ledgers should be immutable
 };
-
