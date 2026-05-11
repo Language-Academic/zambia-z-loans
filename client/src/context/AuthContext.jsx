@@ -1,115 +1,164 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../api/axios';
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [token, setToken] = useState(() => localStorage.getItem('token'));
   const [loading, setLoading] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Load user from localStorage on mount
+  // Computed authentication state
+  const isAuthenticated = useMemo(() => !!token && !!user, [token, user]);
+
+  /**
+   * ATOMIC SESSION MANAGEMENT
+   * Syncs state, storage, and API headers in one go.
+   */
+  const setSession = useCallback((accessToken, userData) => {
+    if (accessToken && userData) {
+      localStorage.setItem('token', accessToken);
+      localStorage.setItem('user', JSON.stringify(userData));
+      setToken(accessToken);
+      setUser(userData);
+      api.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
+    } else {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      setToken(null);
+      setUser(null);
+      delete api.defaults.headers.common['Authorization'];
+    }
+  }, []);
+
+  /**
+   * INITIALIZE AUTH
+   * Loads user on app start or browser refresh.
+   */
   useEffect(() => {
-    const loadUser = async () => {
+    const initAuth = () => {
       const storedToken = localStorage.getItem('token');
       const storedUser = localStorage.getItem('user');
 
       if (storedToken && storedUser) {
         try {
-          setToken(storedToken);
-          setUser(JSON.parse(storedUser));
-          setIsAuthenticated(true);
-        } catch (error) {
-          console.error('Error loading user from localStorage:', error);
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
+          const parsedUser = JSON.parse(storedUser);
+          setSession(storedToken, parsedUser);
+        } catch (err) {
+          console.error("Auth Init Failed:", err);
+          setSession(null, null);
         }
       }
       setLoading(false);
     };
+    initAuth();
+  }, [setSession]);
 
-    loadUser();
+  /**
+   * AXIOS INTERCEPTOR
+   * Automatically handles 401 Unauthorized errors (Expired sessions).
+   */
+  useEffect(() => {
+    const interceptor = api.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (error.response?.status === 401) {
+          // If the server says unauthorized, we wipe the session locally
+          setSession(null, null);
+        }
+        return Promise.reject(error);
+      }
+    );
+    return () => api.interceptors.response.eject(interceptor);
+  }, [setSession]);
+
+  /**
+   * REFRESH USER DATA
+   * Call this to update user balance, role, or status without re-logging.
+   */
+  const refreshUser = useCallback(async () => {
+    try {
+      const { data: response } = await api.get('/auth/me');
+      const updatedUser = response.data;
+      
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      
+      return { success: true, user: updatedUser };
+    } catch (error) {
+      console.error("Manual refresh failed:", error);
+      return { success: false };
+    }
   }, []);
 
-  // Register user
-  const register = async (userData) => {
-    try {
-      setLoading(true);
-      const response = await api.post('/auth/register', userData);
-
-      const { data } = response.data;
-      setUser(data);
-      setToken(data.token);
-      setIsAuthenticated(true);
-
-      // Store in localStorage
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data));
-
-      return { success: true, data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Registration failed';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Login user
   const login = async (credentials) => {
     try {
       setLoading(true);
-      const response = await api.post('/auth/login', credentials);
-
-      const { data } = response.data;
-      setUser(data.user);
-      setToken(data.accessToken);
-      setIsAuthenticated(true);
-
-      // Store in localStorage
-      localStorage.setItem('token', data.accessToken);
-      localStorage.setItem('user', JSON.stringify(data.user));
-
-      return { success: true, data: data.user };
+      const { data: response } = await api.post('/auth/login', credentials);
+      
+      // Destructure based on your specific backend response structure
+      const { user: userData, accessToken } = response.data;
+      
+      setSession(accessToken, userData);
+      return { success: true, data: userData };
     } catch (error) {
-      const message = error.response?.data?.message || 'Login failed';
-      return { success: false, message };
+      return { 
+        success: false, 
+        message: error.response?.data?.message || 'Login failed. Please check your credentials.' 
+      };
     } finally {
       setLoading(false);
     }
   };
 
-  // Logout user
-  const logout = () => {
-    setUser(null);
-    setToken(null);
-    setIsAuthenticated(false);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+  const register = async (userData) => {
+    try {
+      setLoading(true);
+      const { data: response } = await api.post('/auth/register', userData);
+      const { user: newUser, token: newToken } = response.data;
+      
+      setSession(newToken, newUser);
+      return { success: true, data: newUser };
+    } catch (error) {
+      return { 
+        success: false, 
+        message: error.response?.data?.message || 'Registration failed' 
+      };
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const value = {
+  const logout = useCallback(() => {
+    setSession(null, null);
+  }, [setSession]);
+
+  /**
+   * CONTEXT VALUE
+   * Memoized to prevent unnecessary re-renders across the app.
+   */
+  const value = useMemo(() => ({
     user,
     token,
     loading,
     isAuthenticated,
-    register,
     login,
+    register,
     logout,
-  };
+    refreshUser
+  }), [user, token, loading, isAuthenticated, logout, refreshUser]);
 
   return (
     <AuthContext.Provider value={value}>
-      {children}
+      {!loading && children}
     </AuthContext.Provider>
   );
 };
+
+export default AuthContext;
