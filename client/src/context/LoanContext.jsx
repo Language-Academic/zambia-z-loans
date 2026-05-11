@@ -1,213 +1,154 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react';
 import api from '../api/axios';
 
-const LoanContext = createContext();
+const LoanContext = createContext(null);
 
 export const useLoan = () => {
   const context = useContext(LoanContext);
-  if (!context) {
-    throw new Error('useLoan must be used within a LoanProvider');
-  }
+  if (!context) throw new Error('useLoan must be used within a LoanProvider');
   return context;
 };
 
 export const LoanProvider = ({ children }) => {
-  const [loans, setLoans] = useState([]);
+  const [loans, setLoans] = useState([]); // User-specific history
+  const [adminLoans, setAdminLoans] = useState([]); // Master list for Admin
   const [loading, setLoading] = useState(false);
   const [eligibility, setEligibility] = useState(null);
+  const searchTimeoutRef = useRef(null);
 
-  // Check loan eligibility
-  const checkEligibility = async () => {
+  /**
+   * REUSABLE REQUEST WRAPPER
+   * Standardizes the response format and handles loading/errors globally.
+   */
+  const handleRequest = useCallback(async (requestFn, errorMessage) => {
+    setLoading(true);
     try {
-      console.log('Making eligibility API call...');
-      setLoading(true);
-      const response = await api.get('/user/eligibility');
-      console.log('Eligibility API response:', response.data);
-      setEligibility(response.data.data);
-      return { success: true, data: response.data.data };
+      const response = await requestFn();
+      return { 
+        success: true, 
+        data: response.data.data, 
+        pagination: response.data.pagination,
+        message: response.data.message 
+      };
     } catch (error) {
-      console.error('Eligibility API error:', error);
-      const message = error.response?.data?.message || 'Failed to check eligibility';
-      return { success: false, message };
+      console.error(`Zambia Z API Error:`, error);
+      return { 
+        success: false, 
+        message: error.response?.data?.message || errorMessage 
+      };
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  // Apply for loan
-  const applyLoan = async (loanData) => {
-    try {
-      setLoading(true);
-      const response = await api.post('/loan/apply', loanData);
-      return { success: true, data: response.data.data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to apply for loan';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+  /**
+   * LOCAL STATE UPDATER
+   * Keeps the Admin UI responsive by updating the list immediately after an action.
+   */
+  const syncLocalAdminState = useCallback((loanId, updates) => {
+    setAdminLoans(prev => prev.map(loan => 
+      loan._id === loanId ? { ...loan, ...updates } : loan
+    ));
+  }, []);
 
-  // Fetch loan history
-  const fetchLoanHistory = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get('/user/loans');
-      setLoans(response.data.data);
-      return { success: true, data: response.data.data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to fetch loan history';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+  // --- USER CORE ACTIONS ---
 
-  // Get all loans (admin)
-  const getAllLoans = async (params = {}) => {
-    try {
-      setLoading(true);
-      const queryString = new URLSearchParams(params).toString();
-      const url = `/admin/loans${queryString ? `?${queryString}` : ''}`;
-      const response = await api.get(url);
-      return { success: true, data: response.data.data, pagination: response.data.pagination };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to fetch loans';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+  const checkEligibility = useCallback(() => 
+    handleRequest(() => api.get('/user/eligibility'), 'Eligibility check failed')
+      .then(res => { if (res.success) setEligibility(res.data); return res; }), 
+  [handleRequest]);
 
-  // Approve loan (admin)
-  const approveLoanAdmin = async (loanId) => {
-    try {
-      setLoading(true);
-      const response = await api.patch(`/admin/loan/${loanId}/approve`);
-      return { success: true, data: response.data.data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to approve loan';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+  const applyLoan = useCallback((loanData) => 
+    handleRequest(() => api.post('/loan/apply', loanData), 'Application failed'), 
+  [handleRequest]);
 
-  // Reject loan (admin)
-  const rejectLoanAdmin = async (loanId, rejectionReason) => {
-    try {
-      setLoading(true);
-      const response = await api.patch(`/admin/loan/${loanId}/reject`, { rejectionReason });
-      return { success: true, data: response.data.data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to reject loan';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetchLoanHistory = useCallback(() => 
+    handleRequest(() => api.get('/user/loans'), 'Could not fetch history')
+      .then(res => { if (res.success) setLoans(res.data); return res; }), 
+  [handleRequest]);
 
-  // Auto-approve loan (admin)
-  const autoApproveLoanAdmin = async (loanId) => {
-    try {
-      setLoading(true);
-      const response = await api.patch(`/admin/loan/${loanId}/auto-approve`);
-      return { success: true, data: response.data.data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to auto-approve loan';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+  // --- ADMIN CORE ACTIONS ---
 
-  // Special approve loan (admin)
-  const specialApproveLoanAdmin = async (loanId) => {
-    try {
-      setLoading(true);
-      const response = await api.patch(`/admin/loan/${loanId}/special-approve`);
-      return { success: true, data: response.data.data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to special approve loan';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+  /**
+   * GET ALL LOANS (With Search & Filter)
+   * usage: getAllLoans({ status: 'pending', search: 'John' })
+   */
+  const getAllLoans = useCallback((params = {}) => 
+    handleRequest(() => api.get('/admin/loans', { params }), 'Failed to fetch loans')
+      .then(res => { if (res.success) setAdminLoans(res.data); return res; }), 
+  [handleRequest]);
 
-  // Get loan queue (admin)
-  const getLoanQueue = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get('/admin/loan-queue');
-      return { success: true, data: response.data.data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to fetch loan queue';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+  /**
+   * DEBOUNCED SEARCH
+   * Perfect for a search input. It waits 500ms after the user stops typing.
+   */
+  const searchLoans = useCallback((query, filters = {}) => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-  // Initiate loan disbursement (admin)
-  const initiateLoanDisbursement = async (loanId) => {
-    try {
-      setLoading(true);
-      const response = await api.post(`/admin/loan/${loanId}/disbursement`);
-      return { success: true, data: response.data.data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to initiate disbursement';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+    return new Promise((resolve) => {
+      searchTimeoutRef.current = setTimeout(async () => {
+        const res = await getAllLoans({ search: query, ...filters });
+        resolve(res);
+      }, 500);
+    });
+  }, [getAllLoans]);
 
-  // Get admin stats
-  const getAdminStats = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get('/admin/stats');
-      return { success: true, data: response.data.data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to fetch admin stats';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+  const approveLoanAdmin = useCallback((loanId) => 
+    handleRequest(() => api.patch(`/admin/loan/${loanId}/approve`), 'Approval failed')
+      .then(res => { if (res.success) syncLocalAdminState(loanId, { status: 'approved' }); return res; }), 
+  [handleRequest, syncLocalAdminState]);
 
-  // Send approval notification (admin)
-  const sendApprovalNotification = async (loanId) => {
-    try {
-      setLoading(true);
-      const response = await api.post(`/admin/loan/${loanId}/notify-approval`);
-      return { success: true, data: response.data.data };
-    } catch (error) {
-      const message = error.response?.data?.message || 'Failed to send notification';
-      return { success: false, message };
-    } finally {
-      setLoading(false);
-    }
-  };
+  const rejectLoanAdmin = useCallback((loanId, rejectionReason) => 
+    handleRequest(() => api.patch(`/admin/loan/${loanId}/reject`, { rejectionReason }), 'Rejection failed')
+      .then(res => { if (res.success) syncLocalAdminState(loanId, { status: 'rejected', rejectionReason }); return res; }), 
+  [handleRequest, syncLocalAdminState]);
 
-  const value = {
+  const initiateLoanDisbursement = useCallback((loanId) => 
+    handleRequest(() => api.post(`/admin/loan/${loanId}/disbursement`), 'Disbursement failed')
+      .then(res => { if (res.success) syncLocalAdminState(loanId, { status: 'disbursed' }); return res; }), 
+  [handleRequest, syncLocalAdminState]);
+
+  const getAdminStats = useCallback(() => 
+    handleRequest(() => api.get('/admin/stats'), 'Stats fetch failed'), 
+  [handleRequest]);
+
+  // --- ADDITIONAL ADMIN TOOLS ---
+
+  const autoApproveLoanAdmin = useCallback((loanId) => 
+    handleRequest(() => api.patch(`/admin/loan/${loanId}/auto-approve`), 'Auto-approve failed')
+      .then(res => { if (res.success) syncLocalAdminState(loanId, { status: 'approved', type: 'auto' }); return res; }), 
+  [handleRequest, syncLocalAdminState]);
+
+  const sendApprovalNotification = useCallback((loanId) => 
+    handleRequest(() => api.post(`/admin/loan/${loanId}/notify-approval`), 'Notification failed'), 
+  [handleRequest]);
+
+  /**
+   * CONTEXT VALUE MEMOIZATION
+   */
+  const value = useMemo(() => ({
     loans,
+    adminLoans,
     loading,
     eligibility,
     checkEligibility,
     applyLoan,
     fetchLoanHistory,
     getAllLoans,
+    searchLoans,
     approveLoanAdmin,
     rejectLoanAdmin,
     autoApproveLoanAdmin,
-    specialApproveLoanAdmin,
-    getLoanQueue,
     initiateLoanDisbursement,
     getAdminStats,
-    sendApprovalNotification,
-  };
+    sendApprovalNotification
+  }), [
+    loans, adminLoans, loading, eligibility, 
+    checkEligibility, applyLoan, fetchLoanHistory, 
+    getAllLoans, searchLoans, approveLoanAdmin, rejectLoanAdmin, 
+    autoApproveLoanAdmin, initiateLoanDisbursement, 
+    getAdminStats, sendApprovalNotification
+  ]);
 
   return (
     <LoanContext.Provider value={value}>
