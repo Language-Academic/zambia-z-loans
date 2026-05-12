@@ -1,216 +1,122 @@
 const axios = require('axios');
+const prisma = require('../config/prisma');
 
-// Generate M-PESA OAuth token
-const generateMpesaToken = async () => {
+// 1. Singleton Configuration & State
+const MPESA_URL = process.env.NODE_ENV === 'production' 
+  ? 'https://api.safaricom.co.ke' 
+  : 'https://sandbox.safaricom.co.ke';
+
+let cachedToken = null;
+let tokenExpiry = null;
+
+/**
+ * Professional Token Management with Caching
+ * Avoids hitting Safaricom rate limits
+ */
+const getAccessToken = async () => {
+  const now = new Date();
+  if (cachedToken && tokenExpiry && now < tokenExpiry) {
+    return cachedToken;
+  }
+
   const auth = Buffer.from(
     `${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`
   ).toString('base64');
 
   try {
-    const response = await axios.get(
-      'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
-      {
-        headers: {
-          Authorization: `Basic ${auth}`,
-        },
-      }
-    );
+    const { data } = await axios.get(`${MPESA_URL}/oauth/v1/generate?grant_type=client_credentials`, {
+      headers: { Authorization: `Basic ${auth}` }
+    });
 
-    return response.data.access_token;
+    cachedToken = data.access_token;
+    // Set expiry 1 minute early for safety buffer
+    tokenExpiry = new Date(now.getTime() + (data.expires_in - 60) * 1000);
+    
+    return cachedToken;
   } catch (error) {
-    console.error('Error generating M-PESA token:', error.message);
-    throw new Error('Failed to generate M-PESA token');
+    console.error('[MPESA TOKEN ERROR]:', error.response?.data || error.message);
+    throw new Error('M-PESA Authentication failed');
   }
 };
 
-// Format timestamp for M-PESA
-const formatTimestamp = () => {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hour = String(date.getHours()).padStart(2, '0');
-  const minute = String(date.getMinutes()).padStart(2, '0');
-  const second = String(date.getSeconds()).padStart(2, '0');
-
-  return `${year}${month}${day}${hour}${minute}${second}`;
+/**
+ * Sanitizes phone numbers to 254XXXXXXXXX format
+ */
+const formatPhone = (phone) => {
+  let cleaned = phone.replace(/\D/g, '');
+  if (cleaned.startsWith('0')) cleaned = '254' + cleaned.slice(1);
+  if (cleaned.startsWith('7')) cleaned = '254' + cleaned;
+  if (cleaned.startsWith('+')) cleaned = cleaned.slice(1);
+  return cleaned;
 };
 
-// Generate base64 password for M-PESA
-const generatePassword = (timestamp) => {
-  const shortcode = process.env.MPESA_SHORTCODE;
-  const passkey = process.env.MPESA_PASSKEY;
-  const password = `${shortcode}${passkey}${timestamp}`;
-
-  return Buffer.from(password).toString('base64');
-};
-
-// Initiate STK Push
+/**
+ * STK Push (Lipa Na M-PESA Online)
+ */
 const initiateStkPush = async (phoneNumber, amount, loanId) => {
+  const token = await getAccessToken();
+  const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+  const password = Buffer.from(
+    `${process.env.MPESA_SHORTCODE}${process.env.MPESA_PASSKEY}${timestamp}`
+  ).toString('base64');
+
+  const payload = {
+    BusinessShortCode: process.env.MPESA_SHORTCODE,
+    Password: password,
+    Timestamp: timestamp,
+    TransactionType: 'CustomerPayBillOnline',
+    Amount: Math.ceil(amount), // Ensure no decimals
+    PartyA: formatPhone(phoneNumber),
+    PartyB: process.env.MPESA_SHORTCODE,
+    PhoneNumber: formatPhone(phoneNumber),
+    CallBackURL: process.env.MPESA_CALLBACK_URL,
+    AccountReference: `JAMII-${loanId}`,
+    TransactionDesc: 'Loan Processing Fee'
+  };
+
   try {
-    const token = await generateMpesaToken();
-    const timestamp = formatTimestamp();
-    const password = generatePassword(timestamp);
-
-    const payload = {
-      BusinessShortCode: process.env.MPESA_SHORTCODE,
-      Password: password,
-      Timestamp: timestamp,
-      TransactionType: 'CustomerPayBillOnline',
-      Amount: amount,
-      PartyA: phoneNumber,
-      PartyB: process.env.MPESA_SHORTCODE,
-      PhoneNumber: phoneNumber,
-      CallBackURL: process.env.MPESA_CALLBACK_URL,
-      AccountReference: `Loan-${loanId}`,
-      TransactionDesc: 'Loan Application Fee Payment',
-    };
-
-    const response = await axios.post(
-      'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-
-    return {
-      merchantRequestID: response.data.MerchantRequestID,
-      checkoutRequestID: response.data.CheckoutRequestID,
-      responseCode: response.data.ResponseCode,
-      responseDescription: response.data.ResponseDescription,
-    };
+    const { data } = await axios.post(`${MPESA_URL}/mpesa/stkpush/v1/processrequest`, payload, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    return data;
   } catch (error) {
-    console.error('Error initiating STK Push:', error.message);
-    throw new Error('Failed to initiate M-PESA payment');
+    console.error('[MPESA STK ERROR]:', error.response?.data || error.message);
+    throw new Error('Failed to trigger STK Push prompt');
   }
 };
 
-// Handle M-PESA callback
-const handleMpesaCallback = (callbackData) => {
-  try {
-    const { Body } = callbackData;
-    const { stkCallback } = Body;
-
-    if (!stkCallback) {
-      return { success: false, message: 'Invalid callback data' };
-    }
-
-    const { MerchantRequestID, CheckoutRequestID, ResultCode, ResultDesc, CallbackMetadata } = stkCallback;
-
-    if (ResultCode === 0) {
-      // Payment successful
-      const metadata = {};
-      if (CallbackMetadata && CallbackMetadata.Item) {
-        CallbackMetadata.Item.forEach(item => {
-          metadata[item.Name] = item.Value;
-        });
-      }
-
-      return {
-        success: true,
-        merchantRequestID: MerchantRequestID,
-        checkoutRequestID: CheckoutRequestID,
-        resultCode: ResultCode,
-        resultDesc: ResultDesc,
-        metadata,
-      };
-    } else {
-      // Payment failed
-      return {
-        success: false,
-        merchantRequestID: MerchantRequestID,
-        checkoutRequestID: CheckoutRequestID,
-        resultCode: ResultCode,
-        resultDesc: ResultDesc,
-      };
-    }
-  } catch (error) {
-    console.error('Error handling M-PESA callback:', error.message);
-    return { success: false, message: 'Callback processing failed' };
-  }
-};
-
-// Initiate B2C disbursement
+/**
+ * B2C Disbursement (Sending money to customer)
+ */
 const initiateB2CDisbursement = async (phoneNumber, amount, loanId) => {
+  const token = await getAccessToken();
+
+  const payload = {
+    InitiatorName: process.env.MPESA_INITIATOR_NAME,
+    SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
+    CommandID: 'BusinessPayment',
+    Amount: amount,
+    PartyA: process.env.MPESA_SHORTCODE,
+    PartyB: formatPhone(phoneNumber),
+    Remarks: `Disbursement-${loanId}`,
+    QueueTimeOutURL: process.env.MPESA_QUEUE_TIMEOUT_URL,
+    ResultURL: process.env.MPESA_RESULT_URL,
+    Occassion: 'Loan Disbursement'
+  };
+
   try {
-    const token = await generateMpesaToken();
-    const timestamp = formatTimestamp();
-
-    const payload = {
-      InitiatorName: process.env.MPESA_INITIATOR_NAME,
-      SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
-      CommandID: 'BusinessPayment',
-      Amount: amount,
-      PartyA: process.env.MPESA_SHORTCODE,
-      PartyB: phoneNumber,
-      Remarks: `Loan-${loanId}`,
-      QueueTimeOutURL: process.env.MPESA_QUEUE_TIMEOUT_URL,
-      ResultURL: process.env.MPESA_RESULT_URL,
-      Occassion: `Loan Disbursement ${loanId}`,
-    };
-
-    const response = await axios.post(
-      'https://sandbox.safaricom.co.ke/mpesa/b2c/v1/paymentrequest',
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-
-    return {
-      transactionId: response.data.ConversationID || response.data.OriginatorConversationID,
-      responseCode: response.data.ResponseCode,
-      responseDescription: response.data.ResponseDescription,
-    };
+    const { data } = await axios.post(`${MPESA_URL}/mpesa/b2c/v1/paymentrequest`, payload, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    return data;
   } catch (error) {
-    console.error('Error initiating B2C disbursement:', error.message);
-    throw new Error('Failed to initiate loan disbursement');
-  }
-};
-
-// Handle B2C callback
-const handleB2CCallback = (callbackData) => {
-  try {
-    const { Result } = callbackData;
-    const { ResultCode, ResultDesc, TransactionId, ReceiverPartyPublicName } = Result;
-
-    if (ResultCode === 0) {
-      // Disbursement successful
-      return {
-        success: true,
-        transactionId: TransactionId,
-        resultCode: ResultCode,
-        resultDesc: ResultDesc,
-        receiver: ReceiverPartyPublicName,
-      };
-    } else {
-      // Disbursement failed
-      return {
-        success: false,
-        transactionId: TransactionId,
-        resultCode: ResultCode,
-        resultDesc: ResultDesc,
-      };
-    }
-  } catch (error) {
-    console.error('Error handling B2C callback:', error.message);
-    return { success: false, message: 'B2C callback processing failed' };
+    console.error('[MPESA B2C ERROR]:', error.response?.data || error.message);
+    throw new Error('M-PESA disbursement request failed');
   }
 };
 
 module.exports = {
-  generateMpesaToken,
-  formatTimestamp,
-  generatePassword,
   initiateStkPush,
-  handleMpesaCallback,
   initiateB2CDisbursement,
-  handleB2CCallback,
+  getAccessToken
 };
