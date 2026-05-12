@@ -1,48 +1,39 @@
 const express = require('express');
-const {
-  getAllLoans,
-  approveLoan,
-  rejectLoan,
-  autoApproveLoan,
-  specialApproveLoan,
-  getLoanQueue,
-  initiateLoanDisbursement,
-  getAdminStats,
-  sendApprovalNotification,
-} = require('../controllers/adminController');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
-
 const router = express.Router();
+const adminController = require('../controllers/adminController');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { validateLoanAction } = require('../middleware/validators'); // New: critical for fintech
 
-// All routes require authentication and admin role
+// Global Admin Protection
 router.use(requireAuth);
 router.use(requireAdmin);
 
-// @route   GET /api/admin/loans
-router.get('/loans', getAllLoans);
+/**
+ * LOAN MANAGEMENT
+ */
+// Use query params for filtering (e.g., /loans?status=PENDING)
+router.get('/loans', adminController.getAllLoans);
+router.get('/loans/queue', adminController.getLoanQueue);
+router.get('/loans/:id', adminController.getLoanDetails);
 
-// @route   PATCH /api/admin/loan/:id/approve
-router.patch('/loan/:id/approve', approveLoan);
+/**
+ * APPROVAL WORKFLOWS
+ * Pro-tip: Use specific sub-resource paths for clarity
+ */
+router.patch('/loans/:id/status', validateLoanAction, adminController.updateLoanStatus);
+router.post('/loans/:id/auto-approve', adminController.handleAutoApproval);
+router.post('/loans/:id/special-approve', adminController.handleSpecialApproval);
 
-// @route   PATCH /api/admin/loan/:id/reject
-router.patch('/loan/:id/reject', rejectLoan);
+/**
+ * DISBURSEMENTS & NOTIFICATIONS
+ */
+// Disbursement is a sensitive POST action that creates a Transaction record
+router.post('/loans/:id/disburse', adminController.initiateDisbursement);
+router.post('/loans/:id/notify', adminController.sendNotification);
 
-// @route   PATCH /api/admin/loan/:id/auto-approve
-router.patch('/loan/:id/auto-approve', autoApproveLoan);
-
-// @route   PATCH /api/admin/loan/:id/special-approve
-router.patch('/loan/:id/special-approve', specialApproveLoan);
-
-// @route   GET /api/admin/loan-queue
-router.get('/loan-queue', getLoanQueue);
-
-// @route   POST /api/admin/loan/:id/disbursement
-router.post('/loan/:id/disbursement', initiateLoanDisbursement);
-
-// @route   GET /api/admin/stats
-router.get('/stats', getAdminStats);
-
-// @route   POST /api/admin/loan/:id/notify-approval
-router.post('/loan/:id/notify-approval', sendApprovalNotification);
+/**
+ * SYSTEM ANALYTICS
+ */
+router.get('/dashboard/stats', adminController.getAdminStats);
 
 module.exports = router;
