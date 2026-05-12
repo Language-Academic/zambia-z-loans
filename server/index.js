@@ -6,152 +6,104 @@ const path = require('path');
 const prisma = require('./config/prisma');
 const errorHandler = require('./middleware/errorHandler');
 
-// Load environment variables
+// 1. Initial Configuration
 dotenv.config();
+const app = express();
+const PORT = process.env.PORT || 5000;
 
-// Connect to database using Prisma
+// 2. Database Connection Logic
 const connectDB = async () => {
   try {
-    console.log('Attempting to connect to MongoDB via Prisma...');
-    console.log('DATABASE_URL:', process.env.DATABASE_URL ? 'Set' : 'Not set');
-    
     await prisma.$connect();
-    console.log(`MongoDB Connected via Prisma`);
-  } catch (error) {
-    console.error('Database connection error:', error.message);
-    process.exit(1);
-  }
-};
-
-// Connect to database and start server
-const startServer = async () => {
-  try {
-    await connectDB();
+    console.log('✅ MongoDB Connected via Prisma');
     
-    // Seed super admin if environment variables are set
+    // Seed Super Admin if credentials exist
     if (process.env.SUPER_ADMIN_EMAIL && process.env.SUPER_ADMIN_PASSWORD) {
-      try {
-        const seedSuperAdmin = require('./seedSuperAdmin');
-        await seedSuperAdmin();
-      } catch (seedError) {
-        console.error('Error seeding super admin:', seedError.message);
-      }
+      const seedSuperAdmin = require('./seedSuperAdmin');
+      await seedSuperAdmin();
     }
-    
-    const app = express();
-
-    // Security middleware
-    app.use(helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          connectSrc: ["'self'", "https://jamii-loan-i2yo.onrender.com"],
-          scriptSrc: ["'self'", "'unsafe-inline'"],
-          styleSrc: ["'self'", "'unsafe-inline'", "https:"],
-          imgSrc: ["'self'", "data:", "https:"],
-          fontSrc: ["'self'", "https:"],
-        },
-      },
-    }));
-
-    // CORS configuration
-    app.use(cors({
-      origin: process.env.NODE_ENV === 'production'
-        ? [process.env.FRONTEND_URL, 'https://jamii-loan.vercel.app', 'https://jamii-loan.netlify.app']
-        : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3004', 'http://localhost:3007', 'https://jamii-loan.vercel.app', 'https://jamii-loan.netlify.app'],
-      credentials: true,
-    }));
-
-    // Body parser middleware
-    app.use(express.json({ limit: '10mb' }));
-    app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-    // Root endpoint - serve React app in production, API info in development
-    app.get('/', (req, res) => {
-      if (process.env.NODE_ENV === 'production') {
-        const indexPath = path.join(__dirname, '../client/dist/index.html');
-        res.sendFile(indexPath);
-      } else {
-        res.json({
-          success: true,
-          message: 'JAMII LOAN API is running',
-          timestamp: new Date().toISOString(),
-          version: '1.0.0',
-        });
-      }
-    });
-
-    // Health check endpoint
-    app.get('/api/health', (req, res) => {
-      res.json({
-        success: true,
-        message: 'JAMII LOAN API is running',
-        timestamp: new Date().toISOString(),
-      });
-    });
-
-    // Serve static files from the React app build directory
-    console.log('NODE_ENV:', process.env.NODE_ENV);
-    if (process.env.NODE_ENV === 'production') {
-      console.log('Serving static files from:', path.join(__dirname, '../client/dist'));
-      app.use(express.static(path.join(__dirname, '../client/dist')));
-    }
-
-    // Routes
-    app.use('/api/auth', require('./routes/authRoutes'));
-    app.use('/api/user', require('./routes/userRoutes'));
-    app.use('/api/loan', require('./routes/loanRoutes'));
-    app.use('/api/admin', require('./routes/adminRoutes'));
-    app.use('/api/mpesa', require('./routes/mpesaRoutes'));
-    app.use('/api/payment', require('./routes/paymentRoutes'));
-    app.use('/api/notifications', require('./routes/notificationRoutes'));
-    app.use('/api/transactions', require('./routes/transactionRoutes'));
-
-    // Catch all handler: send back React's index.html file for client-side routing
-    if (process.env.NODE_ENV === 'production') {
-      app.get('*', (req, res) => {
-        const indexPath = path.join(__dirname, '../client/dist/index.html');
-        console.log('Serving index.html from:', indexPath);
-        res.sendFile(indexPath);
-      });
-    } else {
-      // In development, serve static files but ensure API routes are handled first
-      console.log('Development mode: serving static files');
-      app.use(express.static(path.join(__dirname, '../client/dist')));
-      app.get('*', (req, res) => {
-        const indexPath = path.join(__dirname, '../client/dist/index.html');
-        console.log('Serving index.html from:', indexPath);
-        res.sendFile(indexPath);
-      });
-    }
-
-    // Error handler middleware (must be last)
-    app.use(errorHandler);
-
-    const PORT = process.env.PORT || 5000;
-
-    const server = app.listen(PORT, () => {
-      console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
-      console.log(`Health check available at: http://localhost:${PORT}/api/health`);
-    });
-
-    // Handle unhandled promise rejections
-    process.on('unhandledRejection', (err, promise) => {
-      console.log(`Error: ${err.message}`);
-      // Close server & exit process
-      server.close(() => {
-        process.exit(1);
-      });
-    });
-
-    return app;
   } catch (error) {
-    console.error('Failed to start server:', error);
+    console.error('❌ Database connection error:', error.message);
     process.exit(1);
   }
 };
 
-// Start the server
+// 3. Security & Global Middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      connectSrc: ["'self'", "https://jamii-loan-i2yo.onrender.com", "*.flutterwave.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https:"],
+      imgSrc: ["'self'", "data:", "https:"],
+    },
+  },
+}));
+
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production'
+    ? [process.env.FRONTEND_URL, 'https://zambiaz.com']
+    : [/localhost/], // Use regex to allow any localhost port in dev
+  credentials: true,
+}));
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// 4. API Routes
+// Grouping these ensures they are checked before any static file serving
+const apiRouter = express.Router();
+apiRouter.use('/auth', require('./routes/authRoutes'));
+apiRouter.use('/user', require('./routes/userRoutes'));
+apiRouter.use('/loan', require('./routes/loanRoutes'));
+apiRouter.use('/mpesa', require('./routes/mpesaRoutes'));
+apiRouter.use('/payment', require('./routes/paymentRoutes'));
+apiRouter.use('/transactions', require('./routes/transactionRoutes'));
+
+app.use('/api', apiRouter);
+
+// 5. Health Check
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'UP', timestamp: new Date().toISOString() });
+});
+
+// 6. Static File Serving (Production Only Logic)
+if (process.env.NODE_ENV === 'production') {
+  const distPath = path.join(__dirname, '../client/dist');
+  app.use(express.static(distPath));
+  
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  app.get('/', (req, res) => {
+    res.json({ message: 'Zambia Z Digital API - Development Mode' });
+  });
+}
+
+// 7. Error Handling (Must be after routes)
+app.use(errorHandler);
+
+// 8. Server Startup & Graceful Shutdown
+const startServer = async () => {
+  await connectDB();
+  
+  const server = app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT} [${process.env.NODE_ENV}]`);
+  });
+
+  // Graceful Shutdown: Close Prisma and Server on SIGTERM (e.g., Render/Heroku restart)
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    server.close(async () => {
+      await prisma.$disconnect();
+      console.log('HTTP server and Prisma connection closed');
+      process.exit(0);
+    });
+  });
+};
+
 startServer();
 
-module.exports = { startServer };
+module.exports = app; // Export for testing
