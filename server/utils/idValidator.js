@@ -1,63 +1,54 @@
 /**
- * Validates a Kenyan National ID number
- * @param {string} id - The National ID to validate
- * @returns {boolean} - True if valid, false otherwise
+ * Professional Identity Validation Utility
+ * Standardizes ID checks for Zambia Z Digital/Jamii Loan
  */
-function validateKenyanID(id) {
-  // Check if it's exactly 9 digits
-  if (!/^\d{9}$/.test(id)) {
-    return false;
-  }
-
-  // Convert to array of digits
-  const digits = id.split('').map(Number);
-
-  // Checksum calculation for Kenyan ID
-  // The last digit is a check digit
-  const checkDigit = digits[8];
-  const baseDigits = digits.slice(0, 8);
-
-  // Multiply by weights (8,7,6,5,4,3,2,1)
-  const weights = [8, 7, 6, 5, 4, 3, 2, 1];
-  let sum = 0;
-
-  for (let i = 0; i < baseDigits.length; i++) {
-    sum += baseDigits[i] * weights[i];
-  }
-
-  // Calculate check digit
-  const remainder = sum % 11;
-  const calculatedCheckDigit = remainder === 0 ? 0 : 11 - remainder;
-
-  return calculatedCheckDigit === checkDigit;
-}
 
 /**
- * Generates a valid Kenyan National ID for testing purposes
- * @returns {string} - A valid 9-digit Kenyan ID
+ * Validates the format of a Kenyan National ID
+ * @param {string|number} id - The National ID to validate
+ * @returns {boolean} - True if format is valid (7-8 digits)
  */
-function generateValidKenyanID() {
-  // Generate first 8 digits randomly
-  const baseDigits = [];
-  for (let i = 0; i < 8; i++) {
-    baseDigits.push(Math.floor(Math.random() * 10));
+const validateKenyanIDFormat = (id) => {
+  if (!id) return false;
+  
+  // Convert to string and remove any whitespace
+  const idStr = id.toString().trim();
+
+  // Professional Check: Kenyan IDs are currently 7 or 8 digits
+  // We use a regex to ensure it's only numbers and the correct length
+  const idRegex = /^\d{7,8}$/;
+  
+  return idRegex.test(idStr);
+};
+
+/**
+ * Verifies ID against Official Records (Mock for IPRS API)
+ * In production, use a service like Metamap, SmileID, or a direct IPRS bridge
+ */
+const verifyIdentityWithIPRS = async (id, fullName) => {
+  try {
+    if (!validateKenyanIDFormat(id)) {
+      throw new Error('Invalid ID format');
+    }
+
+    // Pro Level: Real fintechs verify the name matches the ID
+    console.log(`[KYC] Verifying ID ${id} for ${fullName}...`);
+    
+    // This is where you would call your KYC provider's API
+    // const response = await kycProvider.verify(id, fullName);
+    
+    return {
+      verified: true,
+      provider: 'IPRS_MOCK',
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('[KYC ERROR]:', error.message);
+    return { verified: false, error: error.message };
   }
-
-  // Calculate check digit
-  const weights = [8, 7, 6, 5, 4, 3, 2, 1];
-  let sum = 0;
-
-  for (let i = 0; i < baseDigits.length; i++) {
-    sum += baseDigits[i] * weights[i];
-  }
-
-  const remainder = sum % 11;
-  const checkDigit = remainder === 0 ? 0 : 11 - remainder;
-
-  return baseDigits.join('') + checkDigit;
-}
+};
 
 module.exports = {
-  validateKenyanID,
-  generateValidKenyanID
+  validateKenyanIDFormat,
+  verifyIdentityWithIPRS
 };
