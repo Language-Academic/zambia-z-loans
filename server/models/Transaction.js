@@ -1,42 +1,56 @@
-const mongoose = require('mongoose');
+// src/services/transactionService.js
+const prisma = require('../config/prisma');
 
-const transactionSchema = new mongoose.Schema({
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: [true, 'User ID is required'],
-  },
-  loanId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Loan',
-    required: [true, 'Loan ID is required'],
-  },
-  amount: {
-    type: Number,
-    required: [true, 'Transaction amount is required'],
-  },
-  mpesaResponse: {
-    merchantRequestID: String,
-    checkoutRequestID: String,
-    responseCode: String,
-    responseDescription: String,
-  },
-  status: {
-    type: String,
-    enum: ['pending', 'success', 'failed'],
-    default: 'pending',
-  },
-  phoneNumber: {
-    type: String,
-    required: [true, 'Phone number is required'],
-  },
-}, {
-  timestamps: true,
-});
+/**
+ * ZAMBIA Z - ATOMIC REPAYMENT HANDLER
+ * Logic: Updates transaction AND loan status simultaneously.
+ */
+const recordRepayment = async ({ loanId, userId, amount, mpesaReceipt, phone }) => {
+  return await prisma.$transaction(async (tx) => {
+    // 1. Create the completed transaction record
+    const transaction = await tx.transaction.create({
+      data: {
+        userId,
+        loanId,
+        amount,
+        type: 'REPAYMENT',
+        status: 'COMPLETED',
+        mpesaReceiptNumber: mpesaReceipt,
+        phoneNumber: phone,
+      },
+    });
 
-// Index for better query performance
-transactionSchema.index({ userId: 1 });
-transactionSchema.index({ loanId: 1 });
-transactionSchema.index({ status: 1 });
+    // 2. Update the Loan balance and status
+    const loan = await tx.loan.findUnique({ where: { id: loanId } });
+    const newTotalRepaid = loan.totalRepaid + amount;
+    
+    // Check if loan is now fully paid
+    const interest = (loan.principalAmount * (loan.interestRate / 100));
+    const totalDue = loan.principalAmount + interest + loan.penaltyAmount;
+    const isFullyPaid = newTotalRepaid >= totalDue;
 
-module.exports = mongoose.model('Transaction', transactionSchema);
+    await tx.loan.update({
+      where: { id: loanId },
+      data: {
+        totalRepaid: newTotalRepaid,
+        repaymentStatus: isFullyPaid ? 'FULL' : 'PARTIAL',
+        status: isFullyPaid ? 'CLOSED' : 'ACTIVE',
+        fullyPaidAt: isFullyPaid ? new Date() : null
+      }
+    });
+
+    // 3. Notify the user
+    await tx.notification.create({
+      data: {
+        userId,
+        type: 'REPAYMENT_CONFIRM',
+        title: 'Payment Received! ✅',
+        body: `We have received your payment of KSh ${amount}. Your new balance is KSh ${Math.max(0, totalDue - newTotalRepaid)}.`,
+      }
+    });
+
+    return transaction;
+  });
+};
+
+module.exports = { recordRepayment };
