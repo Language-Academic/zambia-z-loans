@@ -1,151 +1,88 @@
-# Flutterwave Setup Guide for JAMII LOAN
+🚀 Getting Started with PesaPal
+This guide will help you set up PesaPal V3 for live payments in your Zambia Z Digital application. This integration allows you to receive money securely via mobile money and cards.
 
-## 🚀 Getting Started with Flutterwave
+📋 Prerequisites
+PesaPal Merchant Account: Sign up at pesapal.com.
 
-This guide will help you set up Flutterwave for live payments in your JAMII LOAN application.
+Business Verification: Complete your KYC and business registration details on the PesaPal dashboard.
 
-## 📋 Prerequisites
+HTTPS Domain: Ensure your production server has a valid SSL certificate for secure IPN communication.
 
-1. **Flutterwave Account**: Sign up at [flutterwave.com](https://flutterwave.com)
-2. **Business Verification**: Complete KYC verification on Flutterwave
-3. **Kenyan Business**: Ensure your business is registered in Kenya
+🔑 Step 1: Get Your API Credentials
+1.1 Access API Settings
+Log in to your PesaPal Dashboard.
 
-## 🔑 Step 1: Get Your API Credentials
+Navigate to Settings → API Keys.
 
-### 1.1 Access API Settings
-1. Log in to your [Flutterwave Dashboard](https://dashboard.flutterwave.com)
-2. Navigate to **Settings** → **API**
-3. You'll see your API keys in the **Live Data** section
+1.2 Copy Your Keys
+You will need these two credentials to generate your OAuth2 access tokens:
 
-### 1.2 Copy Your Keys
-You'll need these three credentials:
+Plaintext
+PESAPAL_CONSUMER_KEY=your_consumer_key_here
+PESAPAL_CONSUMER_SECRET=your_consumer_secret_here
+⚠️ Important: Ensure you are using Production keys for live payments and Sandbox keys for development.
 
-```
-FLUTTERWAVE_PUBLIC_KEY=FLWPUBK_TEST-xxxxxxxxxxxxxxxxxxxxx-X
-FLUTTERWAVE_SECRET_KEY=FLWSECK_TEST-xxxxxxxxxxxxxxxxxxxxx-X
-FLUTTERWAVE_SECRET_HASH=your-webhook-secret-hash
-```
+🌐 Step 2: Set Up IPN (Instant Payment Notification)
+2.1 Register IPN URL
+In your PesaPal Dashboard, go to IPN Settings.
 
-> **⚠️ Important**: Use **Live** keys for production, not Test keys!
+Register your IPN URL:
 
-## 🌐 Step 2: Set Up Webhook
+Plaintext
+https://api.zambiaz.com/api/v1/payments/pesapal-ipn
+Set the IPN Method to GET or POST as per your backend controller configuration.
 
-### 2.1 Create Webhook Endpoint
-1. In Flutterwave Dashboard, go to **Settings** → **Webhooks**
-2. Click **"Create Webhook"**
-3. Set the **Webhook URL** to:
-   ```
-   https://yourdomain.com/api/payment/webhook/flutterwave
-   ```
-   Replace `yourdomain.com` with your actual domain.
+2.2 Get IPN ID
+After registration, PesaPal provides a unique IPN ID (UUID). Copy this—it is required for every order request.
 
-4. Select these events:
-   - ✅ `charge.completed`
-   - ✅ `transfer.completed`
-   - ✅ `transfer.failed`
+⚙️ Step 3: Configure Environment Variables
+3.1 Edit .env file
+Replace your previous payment configurations in the .env file with these PesaPal variables:
 
-### 2.2 Get Webhook Secret Hash
-After creating the webhook, Flutterwave will provide a **Secret Hash**. Copy this - it's your `FLUTTERWAVE_SECRET_HASH`.
+Code snippet
+# ==========================================
+# PAYMENT GATEWAY: PESAPAL V3
+# ==========================================
+PESAPAL_ENVIRONMENT=sandbox  # Change to 'production' for live
+PESAPAL_CONSUMER_KEY=your_pesapal_key
+PESAPAL_CONSUMER_SECRET=your_pesapal_secret
+PESAPAL_IPN_ID=your_registered_ipn_id
+PESAPAL_CALLBACK_URL=https://zambiaz.com/payment-confirmation
+🧪 Step 4: Test Your Setup
+4.1 Use Sandbox Environment
+Set PESAPAL_ENVIRONMENT=sandbox in your configuration.
 
-## ⚙️ Step 3: Configure Environment Variables
+Use PesaPal test credentials to simulate transactions.
 
-### 3.1 Create .env file
-Copy the example file and add your credentials:
+4.2 Verify Token Generation
+Ensure your server successfully exchanges keys for a Bearer Token.
 
-```bash
-cp .env.example .env
-```
+Check that the token refreshes correctly before expiration.
 
-### 3.2 Edit .env file
-Add your Flutterwave credentials to the `.env` file:
+4.3 Test IPN Callback
+Complete a test payment and verify that your server receives the status update and updates the database via Prisma.
 
-```env
-# Flutterwave Payment Gateway (REQUIRED FOR LIVE PAYMENTS)
-FLUTTERWAVE_PUBLIC_KEY=FLWPUBK-xxxxxxxxxxxxxxxxxxxxx-X
-FLUTTERWAVE_SECRET_KEY=FLWSECK-xxxxxxxxxxxxxxxxxxxxx-X
-FLUTTERWAVE_SECRET_HASH=your-webhook-secret-hash-here
+🚀 Step 5: Go Live
+5.1 Switch to Live Credentials
+Replace Sandbox keys with Live Consumer Keys from your business dashboard.
 
-# Other required variables...
-MONGO_URI=mongodb+srv://...
-JWT_SECRET=your-jwt-secret
-# ... etc
-```
+Update PESAPAL_ENVIRONMENT to production.
 
-## 🧪 Step 4: Test Your Setup
+5.2 Update URLs
+Verify that your PESAPAL_CALLBACK_URL points to your live production domain.
 
-### 4.1 Test Environment First
-Before going live, test with Flutterwave's test environment:
+💳 Supported Payment Methods
+Through PesaPal V3, Zambia Z Digital supports:
 
-```env
-# Use test keys first
-FLUTTERWAVE_PUBLIC_KEY=FLWPUBK_TEST-xxxxxxxxxxxxxxxxxxxxx-X
-FLUTTERWAVE_SECRET_KEY=FLWSECK_TEST-xxxxxxxxxxxxxxxxxxxxx-X
-```
+Mobile Money: M-Pesa, Airtel Money, MTN.
 
-### 4.2 Test Payment Flow
-1. Start your application: `npm run dev`
-2. Apply for a loan
-3. Try paying the processing fee
-4. Use test payment details from Flutterwave documentation
+Cards: Visa, Mastercard, American Express.
 
-### 4.3 Verify Webhook
-Check your server logs to ensure webhooks are being received and processed correctly.
+Bank Transfers: Real-time settlements from supported banks.
 
-## 🚀 Step 5: Go Live
+🔧 Troubleshooting
+"Authorization Failed": Check for trailing spaces in your Consumer Secret or ensure your server time is synced.
 
-### 5.1 Switch to Live Keys
-Replace test keys with live keys in your `.env` file:
+IPN Not Arriving: Ensure your IPN URL is publicly accessible and using HTTPS.
 
-```env
-FLUTTERWAVE_PUBLIC_KEY=FLWPUBK-xxxxxxxxxxxxxxxxxxxxx-X
-FLUTTERWAVE_SECRET_KEY=FLWSECK-xxxxxxxxxxxxxxxxxxxxx-X
-```
-
-### 5.2 Update Webhook URL
-Ensure your webhook URL points to your live domain, not localhost.
-
-### 5.3 Deploy and Test
-1. Deploy your application
-2. Test a real payment with a small amount
-3. Verify the payment flow works end-to-end
-
-## 💳 Supported Payment Methods
-
-With Flutterwave, your users can pay using:
-
-- **M-PESA** (most popular in Kenya)
-- **Airtel Money**
-- **Credit/Debit Cards** (Visa, Mastercard)
-- **Bank Transfers**
-- **Mobile Money** (various providers)
-
-## 🔧 Troubleshooting
-
-### Common Issues:
-
-1. **"Public Key required" error**
-   - Check that `FLUTTERWAVE_PUBLIC_KEY` is set in your `.env` file
-
-2. **Webhook not firing**
-   - Verify webhook URL is accessible from the internet
-   - Check webhook secret hash matches
-
-3. **Payments not completing**
-   - Ensure you're using live keys for live payments
-   - Check Flutterwave dashboard for transaction status
-
-### Support:
-- **Flutterwave Support**: support@flutterwave.com
-- **Documentation**: [Flutterwave Docs](https://developer.flutterwave.com/docs)
-
-## 📞 Need Help?
-
-If you encounter any issues:
-1. Check the server logs for error messages
-2. Verify all environment variables are set correctly
-3. Test with Flutterwave's API documentation examples
-4. Contact Flutterwave support with your merchant ID
-
----
-
-**🎉 Congratulations!** Your JAMII LOAN system now supports live payments through Flutterwave without requiring M-PESA Daraja API registration.
+Invalid IPN ID: Double-check that the PESAPAL_IPN_ID in your .env matches the UUID in your dashboard.
