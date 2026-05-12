@@ -1,51 +1,63 @@
-const mongoose = require('mongoose');
 const { initiateB2CDisbursement } = require('../utils/mpesa');
+const axios = require('axios');
+const prisma = require('../config/prisma');
 
-require('dotenv').config({ path: '.env.test' });
+// Mock Axios to simulate Safaricom API responses
+jest.mock('axios');
 
-describe('M-PESA Integration Tests', () => {
-  beforeAll(async () => {
-    // Connect to test database
-    await mongoose.connect(process.env.MONGO_URI);
-  }, 10000);
+describe('M-PESA B2C Disbursement Integration', () => {
+  const validPhone = '254712345678';
+  const amount = 5000;
+  const loanId = 'loan_abc_123';
 
-  afterAll(async () => {
-    await mongoose.connection.close();
+  beforeEach(() => {
+    jest.clearAllMocks();
   });
 
-  describe('B2C Disbursement', () => {
-    it('should initiate B2C disbursement successfully', async () => {
-      // Mock successful disbursement
-      const phoneNumber = '254712345678';
-      const amount = 50000;
-      const loanId = 'test-loan-id';
-
-      // Note: This test would require mocking the axios calls to M-PESA API
-      // For now, we'll test the function structure
-      try {
-        const result = await initiateB2CDisbursement(phoneNumber, amount, loanId);
-        expect(result).toHaveProperty('transactionId');
-        expect(result).toHaveProperty('responseCode');
-        expect(result).toHaveProperty('responseDescription');
-      } catch (error) {
-        // In test environment, M-PESA API calls will fail due to missing credentials
-        // This is expected behavior
-        expect(error.message).toContain('Failed to initiate loan disbursement');
+  it('should return success when Safaricom accepts the disbursement', async () => {
+    // 1. Setup the Mock Response from Safaricom
+    axios.post.mockResolvedValue({
+      data: {
+        ConversationID: "AG_20260512_000076cf",
+        OriginatorConversationID: "12345-67890-1",
+        ResponseCode: "0",
+        ResponseDescription: "Accept the service request successfully."
       }
     });
 
-    it('should handle invalid phone number', async () => {
-      const invalidPhone = 'invalid-phone';
-      const amount = 50000;
-      const loanId = 'test-loan-id';
+    // 2. Execute the function
+    const result = await initiateB2CDisbursement(validPhone, amount, loanId);
 
-      try {
-        await initiateB2CDisbursement(invalidPhone, amount, loanId);
-        // Should not reach here
-        expect(true).toBe(false);
-      } catch (error) {
-        expect(error.message).toContain('Failed to initiate loan disbursement');
+    // 3. Assertions
+    expect(result.success).toBe(true);
+    expect(result.conversationId).toBeDefined();
+    // Ensure the function actually tried to hit Safaricom
+    expect(axios.post).toHaveBeenCalledTimes(2); // 1 for Token, 1 for B2C
+  });
+
+  it('should throw an error if the phone number is incorrectly formatted', async () => {
+    const invalidPhone = '07123456'; // Missing country code/too short
+
+    await expect(initiateB2CDisbursement(invalidPhone, amount, loanId))
+      .rejects
+      .toThrow('Invalid Kenyan phone number format');
+    
+    // Ensure no API call was even attempted for bad data
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it('should handle Safaricom internal server errors gracefully', async () => {
+    axios.post.mockRejectedValue({
+      response: {
+        status: 500,
+        data: { errorMessage: "Internal Server Error" }
       }
     });
+
+    try {
+      await initiateB2CDisbursement(validPhone, amount, loanId);
+    } catch (error) {
+      expect(error.message).toContain('M-PESA API Error');
+    }
   });
 });
