@@ -1,45 +1,53 @@
 {
-  "name": "jamii-loan-server",
+  "name": "zambia-z-digital-server",
   "version": "1.0.0",
-  "description": "Backend server for JAMII LOAN application",
-  "main": "index.js",
+  "description": "Production API for Zambia Z Digital Fintech Platform",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "jest",
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "lint": "eslint .",
+    "test": "jest --watchAll --no-cache",
+    "test:coverage": "jest --coverage",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:push": "prisma db push",
+    "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "prisma:seed": "node seedSuperAdmin.js"
+    "db:seed": "node seedSuperAdmin.js",
+    "security-check": "npm audit"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "axios": "^1.5.0",
+    "axios": "^1.7.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
     "flutterwave-node-v3": "^1.3.0",
-    "helmet": "^7.0.0",
+    "helmet": "^7.1.0",
+    "joi": "^17.13.0",
     "jsonwebtoken": "^9.0.2",
-    "mongodb": "^6.20.0",
-    "mongoose": "^7.5.0",
-    "nodemailer": "^7.0.9"
+    "morgan": "^1.10.0",
+    "nodemailer": "^6.9.13",
+    "winston": "^3.13.0"
   },
   "devDependencies": {
-    "jest": "^30.2.0",
-    "nodemon": "^3.0.1",
+    "eslint": "^9.0.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.0",
     "prisma": "^5.22.0",
-    "supertest": "^7.1.4"
+    "supertest": "^7.0.0"
   },
   "keywords": [
-    "loan",
+    "fintech",
+    "loan-management",
     "mpesa",
-    "nodejs",
-    "express",
-    "mongodb"
+    "prisma",
+    "express"
   ],
-  "author": "",
+  "author": "Joseph Mwakughu Mwasi",
   "license": "ISC"
 }
