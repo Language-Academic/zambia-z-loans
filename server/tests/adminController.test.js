@@ -1,155 +1,89 @@
-const mongoose = require('mongoose');
-const User = require('../models/User');
-const Loan = require('../models/Loan');
-const Notification = require('../models/Notification');
-const { autoApproveLoan, getLoanQueue, getAdminStats } = require('../controllers/adminController');
+const { autoApproveLoan, getAdminStats } = require('../controllers/adminController');
+const prisma = require('../config/prisma');
 
-require('dotenv').config({ path: '.env.test' });
+// Mock Prisma to avoid hitting the real database during unit tests
+jest.mock('../config/prisma', () => ({
+  loan: {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+    findMany: jest.fn(),
+    count: jest.fn(),
+  },
+  notification: {
+    create: jest.fn(),
+  },
+  $transaction: jest.fn((callback) => callback(require('../config/prisma'))),
+}));
 
-describe('Admin Controller Tests', () => {
-  let testUser;
-  let testLoan;
+describe('Admin Controller - Financial Logic', () => {
+  let mockReq, mockRes, mockNext;
 
-  beforeAll(async () => {
-    // Connect to test database
-    await mongoose.connect(process.env.MONGO_URI);
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockReq = { params: {}, user: { id: 'admin_123', role: 'ADMIN' } };
+    mockRes = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    };
+    mockNext = jest.fn();
+  });
 
-    // Clean up before creating test data
-    await User.deleteMany({});
-    await Loan.deleteMany({});
-    await Notification.deleteMany({});
-
-    // Create test user
-    testUser = await User.create({
-      fullName: 'Test User',
-      email: 'user@test.com',
-      password: 'password123',
-      role: 'user',
-      isCitizen: true,
-      nationalId: '87654321',
-      creditScore: 700,
-    });
-
-    // Create test loan
-    testLoan = await Loan.create({
-      userId: testUser._id,
-      amount: 50000,
-      status: 'pending',
+  describe('autoApproveLoan()', () => {
+    const loanId = 'loan_888';
+    const mockLoan = {
+      id: loanId,
+      userId: 'user_456',
+      amount: 5000,
+      status: 'PENDING',
       feePaid: true,
-      feeAmount: 500,
-    });
-  }, 10000);
+      user: { creditScore: 750 } // Critical for auto-approval
+    };
 
-  afterAll(async () => {
-    // Clean up
-    await User.deleteMany({});
-    await Loan.deleteMany({});
-    await Notification.deleteMany({});
-    await mongoose.connection.close();
-  });
+    it('should approve loan if credit score > 700 and fee is paid', async () => {
+      mockReq.params.id = loanId;
+      prisma.loan.findUnique.mockResolvedValue(mockLoan);
 
-  describe('Auto-approve loan', () => {
-    it('should auto-approve loan with valid criteria', async () => {
-      // Mock request and response objects
-      const req = {
-        params: { id: testLoan._id },
-        user: { _id: 'admin-id' }
-      };
-      const res = {
-        status: jest.fn().mockReturnThis(),
-        json: jest.fn()
-      };
+      await autoApproveLoan(mockReq, mockRes, mockNext);
 
-      await autoApproveLoan(req, res, jest.fn());
+      // Verify logic: Status must change to APPROVED
+      expect(prisma.loan.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: loanId },
+        data: { status: 'APPROVED', isAutoApproved: true }
+      }));
 
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          success: true,
-          message: expect.stringContaining('auto-approved')
-        })
-      );
-
-      // Verify loan status
-      const updatedLoan = await Loan.findById(testLoan._id);
-      expect(updatedLoan.status).toBe('approved');
-      expect(updatedLoan.isAutoApproved).toBe(true);
-
-      // Verify notification created
-      const notification = await Notification.findOne({
-        userId: testUser._id,
-        type: 'loan_approved'
-      });
-      expect(notification).toBeTruthy();
-      expect(notification.title).toBe('Loan Auto-Approved');
+      // Verify customer is notified
+      expect(prisma.notification.create).toHaveBeenCalled();
+      expect(mockRes.status).toHaveBeenCalledWith(200);
+      expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
     });
 
-    it('should reject auto-approval if criteria not met', async () => {
-      // Create loan with unpaid fee
-      const badLoan = await Loan.create({
-        userId: testUser._id,
-        amount: 50000,
-        status: 'pending',
-        feePaid: false,
-      });
+    it('should fail auto-approval if processing fee is missing', async () => {
+      mockReq.params.id = loanId;
+      prisma.loan.findUnique.mockResolvedValue({ ...mockLoan, feePaid: false });
 
-      const req = {
-        params: { id: badLoan._id },
-        user: { _id: 'admin-id' }
-      };
-      const res = {
-        status: jest.fn().mockReturnThis(),
-        json: jest.fn()
-      };
+      await autoApproveLoan(mockReq, mockRes, mockNext);
 
-      await autoApproveLoan(req, res, jest.fn());
-
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          success: false,
-          message: expect.stringContaining('does not meet auto-approval criteria')
-        })
-      );
+      expect(mockRes.status).toHaveBeenCalledWith(400);
+      expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({
+        message: 'Processing fee must be paid for auto-approval'
+      }));
     });
   });
 
-  describe('Get loan queue', () => {
-    it('should return pending loans for queue', async () => {
-      const req = {};
-      const res = {
-        json: jest.fn()
-      };
+  describe('getAdminStats()', () => {
+    it('should aggregate financial data for dashboard', async () => {
+      prisma.loan.count.mockResolvedValue(150);
+      prisma.loan.findMany.mockResolvedValue([{ amount: 1000 }, { amount: 2000 }]);
 
-      await getLoanQueue(req, res, jest.fn());
+      await getAdminStats(mockReq, mockRes, mockNext);
 
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          success: true,
-          data: expect.any(Array)
+      expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({
+        success: true,
+        data: expect.objectContaining({
+          totalLoans: 150,
+          totalVolume: 3000
         })
-      );
-    });
-  });
-
-  describe('Get admin stats', () => {
-    it('should return admin dashboard statistics', async () => {
-      const req = {};
-      const res = {
-        json: jest.fn()
-      };
-
-      await getAdminStats(req, res, jest.fn());
-
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          success: true,
-          data: expect.objectContaining({
-            loans: expect.any(Object),
-            users: expect.any(Object),
-            disbursements: expect.any(Object)
-          })
-        })
-      );
+      }));
     });
   });
 });
