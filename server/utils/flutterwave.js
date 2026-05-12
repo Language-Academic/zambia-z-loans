@@ -1,264 +1,100 @@
 const Flutterwave = require('flutterwave-node-v3');
 const prisma = require('../config/prisma');
 
-// Initialize Flutterwave with environment variables (only if keys are available)
-let flw = null;
-if (process.env.FLUTTERWAVE_PUBLIC_KEY && process.env.FLUTTERWAVE_SECRET_KEY) {
-  flw = new Flutterwave(
-    process.env.FLUTTERWAVE_PUBLIC_KEY,
-    process.env.FLUTTERWAVE_SECRET_KEY
-  );
-}
+// Singleton Initialization
+const flw = new Flutterwave(
+  process.env.FLUTTERWAVE_PUBLIC_KEY,
+  process.env.FLUTTERWAVE_SECRET_KEY
+);
 
 /**
- * Initialize a payment with Flutterwave
- * @param {Object} paymentData - Payment details
- * @param {string} paymentData.phoneNumber - Customer's phone number
- * @param {number} paymentData.amount - Amount to charge
- * @param {string} paymentData.email - Customer's email
- * @param {string} paymentData.name - Customer's name
- * @param {string} paymentData.reference - Unique transaction reference
- * @returns {Object} Payment initialization response
+ * Initiate Mobile Money (M-PESA/Airtel/Zamtel) Charge
  */
-const initiateFlutterwavePayment = async (paymentData) => {
+const initiateFlutterwavePayment = async ({ phoneNumber, amount, email, name, reference }) => {
   try {
-    const { phoneNumber, amount, email, name, reference } = paymentData;
-
-    // Validate required fields
-    if (!phoneNumber || !amount || !email || !name || !reference) {
-      throw new Error('Missing required payment data');
-    }
-
-    // Prepare payment payload for M-PESA
     const payload = {
       tx_ref: reference,
-      amount: amount,
-      currency: 'KES',
-      redirect_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/callback`,
+      amount,
+      currency: process.env.CURRENCY || 'KES',
+      redirect_url: `${process.env.API_URL}/api/payments/callback`,
       payment_options: 'mobilemoney',
-      customer: {
-        email: email,
-        phone_number: phoneNumber,
-        name: name,
-      },
+      customer: { email, phone_number: phoneNumber, name },
       customizations: {
-        title: 'JAMII LOAN - Processing Fee Payment',
-        description: `Processing fee payment of KSh ${amount.toLocaleString()}`,
-        logo: 'https://your-logo-url.com/logo.png', // Replace with your logo URL
-      },
-      meta: {
-        consumer_id: reference,
-        consumer_mac: '92a3-912ba-1192a',
-      },
+        title: 'Zambia Z Digital',
+        description: `Loan Processing Fee: ${amount}`,
+        logo: 'https://your-cdn.com/logo.png',
+      }
     };
 
-    console.log('Initiating Flutterwave payment:', payload);
-
-    // Initialize payment
     const response = await flw.Charge.mobile_money(payload);
 
-    console.log('Flutterwave response:', response);
-
-    if (response.status === 'success') {
-      return {
-        success: true,
-        transactionId: response.data.id,
-        checkoutRequestID: response.data.tx_ref,
-        responseCode: response.data.flw_ref,
-        responseDescription: response.message,
-        customerMessage: response.data.processor_response || 'Payment initiated successfully',
-        merchantRequestId: response.data.tx_ref,
-        ...response.data,
-      };
-    } else {
-      throw new Error(response.message || 'Payment initialization failed');
+    if (response.status !== 'success') {
+      throw new Error(response.message || 'Payment initiation failed');
     }
-  } catch (error) {
-    console.error('Flutterwave payment initiation error:', error);
-    throw new Error(`Payment initiation failed: ${error.message}`);
-  }
-};
 
-/**
- * Verify payment status with Flutterwave
- * @param {string} transactionId - Flutterwave transaction ID
- * @returns {Object} Verification response
- */
-const verifyFlutterwavePayment = async (transactionId) => {
-  try {
-    console.log('Verifying Flutterwave payment:', transactionId);
-
-    const response = await flw.Transaction.verify({ id: transactionId });
-
-    console.log('Flutterwave verification response:', response);
-
-    if (response.status === 'success') {
-      const { data } = response;
-
-      return {
-        success: true,
-        transactionId: data.id,
-        tx_ref: data.tx_ref,
-        amount: data.amount,
-        currency: data.currency,
-        status: data.status,
-        payment_type: data.payment_type,
-        customer: data.customer,
-        verified: data.status === 'successful',
-        message: data.status === 'successful' ? 'Payment verified successfully' : 'Payment not completed',
-      };
-    } else {
-      return {
-        success: false,
-        message: response.message || 'Payment verification failed',
-      };
-    }
-  } catch (error) {
-    console.error('Flutterwave verification error:', error);
     return {
-      success: false,
-      message: `Verification failed: ${error.message}`,
+      success: true,
+      flw_ref: response.data.flw_ref,
+      order_id: response.data.id
     };
+  } catch (error) {
+    console.error('[FLW INIT ERROR]:', error.message);
+    throw error;
   }
 };
 
 /**
- * Handle Flutterwave webhook
- * @param {Object} webhookData - Webhook payload from Flutterwave
- * @returns {Object} Webhook processing response
+ * Handle Webhook with Idempotency & Atomic Transactions
  */
-const handleFlutterwaveWebhook = async (webhookData) => {
+const handleFlutterwaveWebhook = async (payload) => {
+  const { tx_ref, status, id: flw_id, amount } = payload;
+
   try {
-    console.log('Processing Flutterwave webhook:', webhookData);
-
-    // Verify webhook signature (recommended for production)
-    const secretHash = process.env.FLUTTERWAVE_SECRET_HASH;
-    if (secretHash) {
-      const signature = webhookData['verif-hash'];
-      if (!signature || signature !== secretHash) {
-        throw new Error('Invalid webhook signature');
-      }
-    }
-
-    const { id, tx_ref, status, amount, currency } = webhookData;
-
-// Find transaction in database using Prisma
-    const transaction = await prisma.transaction.findFirst({
-      where: {
-        mpesaResponse: {
-          path: ['checkoutRequestID'],
-          equals: tx_ref,
-        },
-      },
+    // 1. Find the local transaction record
+    const localTx = await prisma.transaction.findFirst({
+      where: { checkoutRequestId: tx_ref }
     });
 
-    if (!transaction) {
-      console.log('Transaction not found for reference:', tx_ref);
-      return { success: false, message: 'Transaction not found' };
+    if (!localTx) return { success: false, message: 'Transaction not found' };
+
+    // 2. Idempotency Check: Don't process if already completed
+    if (localTx.status === 'COMPLETED') {
+      return { success: true, message: 'Already processed' };
     }
 
-    // Update transaction status
-    if (status === 'successful') {
-      // Update transaction with Prisma
-      await prisma.transaction.update({
-        where: { id: transaction.id },
+    // 3. Atomic Update: Wrap everything in a transaction
+    await prisma.$transaction(async (tx) => {
+      // Update the transaction status
+      await tx.transaction.update({
+        where: { id: localTx.id },
         data: {
-          mpesaResponse: {
-            ...transaction.mpesaResponse,
-            status: 'completed',
-            completedAt: new Date(),
-            flutterwaveData: webhookData,
-          },
-        },
-      });
-
-      // Update loan fee status if this was a fee payment
-      if (transaction.loanId) {
-        const loan = await prisma.loan.findUnique({
-          where: { id: transaction.loanId },
-        });
-        if (loan && !loan.feePaid) {
-          await prisma.loan.update({
-            where: { id: transaction.loanId },
-            data: { feePaid: true },
-          });
-          console.log('Loan fee marked as paid:', transaction.loanId);
+          status: status === 'successful' ? 'COMPLETED' : 'FAILED',
+          mpesaReceiptNumber: String(flw_id), // Storing FLW ID as reference
+          completedAt: new Date()
         }
-      }
-
-      console.log('Payment completed successfully:', tx_ref);
-      return { success: true, message: 'Payment completed successfully' };
-    } else if (status === 'failed') {
-      // Update transaction with Prisma
-      await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          mpesaResponse: {
-            ...transaction.mpesaResponse,
-            status: 'failed',
-            failedAt: new Date(),
-            flutterwaveData: webhookData,
-          },
-        },
       });
 
-      console.log('Payment failed:', tx_ref);
-      return { success: false, message: 'Payment failed' };
-    }
+      // If it's a loan fee and payment was successful, update the loan
+      if (status === 'successful' && localTx.loanId) {
+        await tx.loan.update({
+          where: { id: localTx.loanId },
+          data: { 
+            feePaid: true,
+            status: 'APPROVED' // Auto-move to approved once fee is paid
+          }
+        });
+      }
+    });
 
-    return { success: true, message: 'Webhook processed' };
+    return { success: true };
   } catch (error) {
-    console.error('Flutterwave webhook processing error:', error);
-    return { success: false, message: `Webhook processing failed: ${error.message}` };
+    console.error('[FLW WEBHOOK ERROR]:', error.message);
+    throw error;
   }
-};
-
-/**
- * Get payment methods available through Flutterwave
- * @returns {Array} List of available payment methods
- */
-const getFlutterwavePaymentMethods = () => {
-  return [
-    {
-      id: 'flutterwave_mpesa',
-      name: 'M-PESA via Flutterwave',
-      description: 'Pay using M-PESA (works without business registration)',
-      provider: 'flutterwave',
-      fields: ['phoneNumber', 'email', 'name'],
-      instructions: 'Enter your M-PESA phone number, email, and full name',
-      currency: 'KES',
-      minAmount: 1,
-      maxAmount: 150000, // Flutterwave limits
-    },
-    {
-      id: 'flutterwave_card',
-      name: 'Card Payment via Flutterwave',
-      description: 'Pay using Visa, Mastercard, or other cards',
-      provider: 'flutterwave',
-      fields: ['cardNumber', 'expiryMonth', 'expiryYear', 'cvv', 'email', 'name'],
-      instructions: 'Enter your card details and billing information',
-      currency: 'KES',
-      minAmount: 1,
-      maxAmount: 1000000,
-    },
-    {
-      id: 'flutterwave_bank',
-      name: 'Bank Transfer via Flutterwave',
-      description: 'Pay via direct bank transfer',
-      provider: 'flutterwave',
-      fields: ['accountNumber', 'bankCode', 'email', 'name'],
-      instructions: 'Enter your bank account details',
-      currency: 'KES',
-      minAmount: 1,
-      maxAmount: 1000000,
-    },
-  ];
 };
 
 module.exports = {
   initiateFlutterwavePayment,
-  verifyFlutterwavePayment,
   handleFlutterwaveWebhook,
-  getFlutterwavePaymentMethods,
-  flw, // Export the Flutterwave instance for advanced usage
+  flw
 };
