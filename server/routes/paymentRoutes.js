@@ -1,50 +1,44 @@
 const express = require('express');
-const { getAvailablePaymentMethods } = require('../utils/paymentAlternatives');
-const { handleFlutterwaveWebhook } = require('../utils/flutterwave');
-
 const router = express.Router();
+const paymentController = require('../controllers/paymentController');
+const { requireAuth } = require('../middleware/auth');
+const crypto = require('crypto');
 
-// @desc    Get available payment methods
-// @route   GET /api/payment/methods
-// @access  Public
-const getPaymentMethods = async (req, res) => {
-  try {
-    const methods = getAvailablePaymentMethods();
+/**
+ * @route   GET /api/payments/methods
+ * @desc    Get active payment gateways based on user region
+ */
+router.get('/methods', requireAuth, paymentController.getPaymentMethods);
 
-    res.json({
-      success: true,
-      data: methods,
-    });
-  } catch (error) {
-    console.error('Error fetching payment methods:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch payment methods',
-    });
-  }
-};
+/**
+ * @route   POST /api/payments/webhook/flutterwave
+ * @desc    Secure Flutterwave Webhook with Signature Verification
+ */
+router.post(
+  '/webhook/flutterwave', 
+  // Use a raw body parser specifically for signature verification if needed
+  express.json(), 
+  async (req, res) => {
+    // 1. Verify Flutterwave Secret Hash
+    const secretHash = process.env.FLUTTERWAVE_SECRET_HASH;
+    const signature = req.headers['verif-hash'];
 
-// @desc    Handle Flutterwave webhook
-// @route   POST /api/payment/webhook/flutterwave
-// @access  Public (from Flutterwave)
-const flutterwaveWebhook = async (req, res) => {
-  try {
-    console.log('Received Flutterwave webhook:', req.body);
-
-    const result = await handleFlutterwaveWebhook(req.body);
-
-    if (result.success) {
-      res.status(200).json({ status: 'success' });
-    } else {
-      res.status(400).json({ status: 'failed', message: result.message });
+    if (!signature || signature !== secretHash) {
+      // Log unauthorized attempt[cite: 1]
+      console.warn('[SECURITY] Unauthorized Flutterwave webhook attempt blocked.');
+      return res.status(401).end(); 
     }
-  } catch (error) {
-    console.error('Flutterwave webhook error:', error);
-    res.status(500).json({ status: 'error', message: 'Webhook processing failed' });
-  }
-};
 
-router.get('/methods', getPaymentMethods);
-router.post('/webhook/flutterwave', express.raw({ type: 'application/json' }), flutterwaveWebhook);
+    // 2. Acknowledge receipt immediately to avoid retries
+    res.status(200).send('Webhook Received');
+
+    // 3. Process the logic asynchronously
+    try {
+      await paymentController.handleFlutterwaveWebhook(req.body);
+    } catch (error) {
+      console.error('[PAYMENT] Webhook processing error:', error.message);
+    }
+  }
+);
 
 module.exports = router;
