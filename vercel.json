@@ -1,9 +1,19 @@
 {
+  "version": 2,
+  "name": "zambia-z-digital-frontend",
   "buildCommand": "npm run build",
-  "outputDirectory": "public",
+  "outputDirectory": "client/dist",
   "framework": "vite",
   "installCommand": "npm run install-all",
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "cleanUrls": true
 }
