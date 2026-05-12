@@ -1,103 +1,187 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// This is your professional Zambia Z Prisma schema
+// Use 'npx prisma generate' after saving
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "mongodb"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id                String    @id @default(auto()) @map("_id") @db.ObjectId
-  email             String    @unique
-  passwordHash      String
-  role              String    @default("USER")
-  fullName          String?
-  nationalId        String?
-  isCitizen         Boolean   @default(true)
-  creditScore       Int       @default(500)
-  totalLoansApplied Int       @default(0)
-  totalLoansApproved Int      @default(0)
-  loanLimit         Float     @default(50000)
-  isActive          Boolean   @default(true)
-  createdAt         DateTime  @default(now())
-  lastLogin         DateTime?
-  updatedAt         DateTime  @updatedAt
+// --- ENUMS for Type Safety ---
+// Prevents spelling errors in status strings
 
+enum Role {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum LoanStatus {
+  PENDING
+  VERIFICATION
+  APPROVED
+  REJECTED
+  ACTIVE
+  CLOSED
+  DEFAULTED
+}
+
+enum DisbursementStatus {
+  IDLE
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum RepaymentStatus {
+  UNPAID
+  PARTIAL
+  FULL
+  OVERDUE
+}
+
+enum TransactionType {
+  LOAN_FEE
+  DISBURSEMENT
+  REPAYMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+// --- MODELS ---
+
+model User {
+  id                 String    @id @default(uuid())
+  email              String    @unique
+  passwordHash       String    // Store Argon2 hashes only[cite: 1]
+  fullName           String
+  nationalId         String    @unique
+  isCitizen          Boolean   @default(true)
+  role               Role      @default(USER)
+  
+  // Financial Profile
+  creditScore        Int       @default(400) // Realistic starting score
+  loanLimit          Float     @default(1000) // Lower initial limit for risk management
+  isActive           Boolean   @default(true)
+  
+  // Audit Stats
+  totalLoansApplied  Int       @default(0)
+  totalLoansApproved Int       @default(0)
+  lastLogin          DateTime?
+  
   // Relations
-  loans             Loan[]
-  notifications     Notification[]
-  approvedLoans     Loan[]    @relation("ApprovedBy")
+  loans              Loan[]    @relation("UserLoans")
+  adminApprovals     Loan[]    @relation("AdminApprovals")
+  notifications      Notification[]
+  transactions       Transaction[]
+  refreshTokens      RefreshToken[]
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   @@map("users")
 }
 
 model Loan {
-  id                      String    @id @default(auto()) @map("_id") @db.ObjectId
-  userId                  String    @db.ObjectId
-  amount                  Float
-  status                  String    @default("pending")
-  feePaid                 Boolean   @default(false)
-  feeAmount               Float     @default(0)
-  mpesaTransactionId      String?
-  isAutoApproved          Boolean   @default(false)
-  autoApprovedAt          DateTime?
-  isSpecialApproved       Boolean   @default(false)
-  specialApprovedAt       DateTime?
-  approvedBy              String?   @db.ObjectId
-  approvalDate            DateTime?
-  rejectionReason         String?
-  disbursementStatus      String    @default("pending")
-  disbursementTransactionId String?
-  disbursedAt             DateTime?
-  description             String?
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
+  id                   String             @id @default(uuid())
+  userId               String
+  user                 User               @relation("UserLoans", fields: [userId], references: [id])
+  
+  // Financial Data
+  principalAmount      Float
+  interestRate         Float              @default(15.0)
+  serviceFee           Float              @default(0.0)
+  penaltyAmount        Float              @default(0.0)
+  totalRepaid          Float              @default(0.0)
+  
+  // Lifecycle Status
+  status               LoanStatus         @default(PENDING)
+  repaymentStatus      RepaymentStatus    @default(UNPAID)
+  
+  // Fee/Disbursement Tracking
+  feePaid              Boolean            @default(false)
+  mpesaFeeRef          String?            @unique
+  
+  disbursementStatus   DisbursementStatus @default(IDLE)
+  disbursementRef      String?            @unique
+  disbursedAt          DateTime?
+  
+  // Approval Logic
+  isAutoApproved       Boolean            @default(false)
+  approvedByAdminId    String?
+  approvedByAdmin      User?              @relation("AdminApprovals", fields: [approvedByAdminId], references: [id])
+  rejectionReason      String?
+  
+  dueDate              DateTime?
+  fullyPaidAt          DateTime?
+  
+  notifications        Notification[]
+  transactions         Transaction[]
 
-  // Relations
-  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  approvedByAdmin         User?     @relation("ApprovedBy", fields: [approvedBy], references: [id])
-  notifications           Notification[]
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 
   @@index([userId, status])
-  @@index([status])
   @@map("loans")
 }
 
-model Notification {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String   @db.ObjectId
-  loanId    String?  @db.ObjectId
-  title     String
-  message   String
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Transaction {
+  id                 String            @id @default(uuid())
+  userId             String
+  user               User              @relation(fields: [userId], references: [id])
+  loanId             String?
+  loan               Loan?             @relation(fields: [loanId], references: [id])
+  
+  amount             Float
+  type               TransactionType
+  status             TransactionStatus @default(PENDING)
+  
+  // M-Pesa Specific Tracking
+  mpesaReceiptNumber String?           @unique
+  merchantRequestId  String?           @unique
+  checkoutRequestId  String?           @unique
+  phoneNumber        String?
+  
+  description        String?
+  createdAt          DateTime          @default(now())
 
-  // Relations
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  loan      Loan?    @relation(fields: [loanId], references: [id], onDelete: SetNull)
+  @@map("transactions")
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loanId      String?
+  loan        Loan?    @relation(fields: [loanId], references: [id])
+  
+  title       String
+  body        String
+  isRead      Boolean  @default(false)
+  metadata    Json?    // For deep-linking in Flutter
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@map("notifications")
 }
 
-model Transaction {
-  id                   String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId               String   @db.ObjectId
-  loanId               String?  @db.ObjectId
-  amount               Float
-  type                 String
-  status               String   @default("pending")
-  transactionId        String?
-  mpesaReceiptNumber   String?
-  mpesaResponse        Json?    // Added for storing M-PESA callback response
-  phoneNumber          String?
-  description          String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+model RefreshToken {
+  id          String   @id @default(uuid())
+  token       String   @unique
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  revoked     Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
 
-  @@map("transactions")
+  @@map("refresh_tokens")
 }
